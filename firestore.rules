@@ -1,0 +1,175 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          getUserDoc().data.get('role', '') == 'amministratore' ||
+          getUserDoc().data.get('ruolo_globale', '') == 'amministratore'
+        );
+    }
+
+    function isStaff() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          isAdmin() ||
+          getUserDoc().data.get('role', '') == 'staff' ||
+          getUserDoc().data.get('ruolo_globale', '') == 'staff'
+        );
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    // Stagione corrente - solo admin può cambiare
+    match /impostazione/stagione_corrente {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Profili utente: ognuno legge/scrive il proprio; admin può leggere tutti e scrivere tutti
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Membri della squadra (indirizzario): tutti autenticati leggono; solo staff/admin scrivono
+    match /indirizzario/{memberId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    match /members/{memberId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Presenze: tutti autenticati leggono; solo staff/admin modificano/eliminano
+    match /presenze/{presenceId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isStaff();
+    }
+
+    // Calendario eventi (calendario): tutti autenticati leggono; solo staff/admin scrive
+    match /calendario/{eventId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    match /events/{eventId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Storico presenze archiviate - solo admin scrive
+    match /presenze_history/{season} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Storico stagioni - solo admin scrive
+    match /stagioni_storico/{season} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Analisi partite - solo staff/admin scrive
+    match /match_analysis/{matchId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Hall of Fame (albo) - solo staff/admin scrive
+    match /albo/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    match /hall_of_fame/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Lega / campionato - solo staff/admin scrive
+    match /league/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    match /league/{docId}/{subCollection}/{subDocId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    match /league_history/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Roster tornei - solo staff/admin scrive
+    match /roster/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+    match /rosters/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Bubba Wrapped - solo admin genera; tutti autenticati leggono
+    match /wrapped/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    match /wrapped/{docId}/{subCollection}/{subDocId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    match /bubba_wrapped/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    match /bubba_wrapped/{docId}/{subCollection}/{subDocId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Mappa geografica mondiale - solo staff/admin scrive
+    match /world_locations/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Schemi tattici - autenticati leggono e scrivono
+    match /tactical_schemes/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // Comunicazioni - tutti leggono; solo staff scrive
+    match /comunicazioni/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff();
+    }
+
+    // Impostazioni generali (altre) - solo admin scrive
+    match /impostazione/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Default catch-all: solo lettura per autenticati, nessuna scrittura non coperta sopra
+    match /{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+  }
+}

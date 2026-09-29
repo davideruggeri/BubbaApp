@@ -9,13 +9,38 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "expo": "~54.0.25",
-    "expo-status-bar": "~3.0.8",
-    "react": "19.1.0",
-    "react-native": "0.81.5"
+    "@expo/metro-runtime": "~55.0.12",
+    "@expo/vector-icons": "^15.0.3",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-picker/picker": "2.11.4",
+    "@react-navigation/bottom-tabs": "^7.8.6",
+    "@react-navigation/native": "^7.1.21",
+    "@react-navigation/native-stack": "^7.8.0",
+    "expo": "~55.0.31",
+    "expo-asset": "~55.0.20",
+    "expo-audio": "~55.0.18",
+    "expo-av": "~16.0.8",
+    "expo-font": "~55.0.8",
+    "expo-image-picker": "~55.0.24",
+    "expo-modules-core": "~55.0.26",
+    "expo-speech": "~55.0.18",
+    "expo-status-bar": "~55.0.6",
+    "firebase": "^12.6.0",
+    "leaflet": "^1.9.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-leaflet": "^5.0.0",
+    "react-native": "0.83.10",
+    "react-native-maps": "1.27.2",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.23.0",
+    "react-native-web": "~0.21.0"
   },
   "devDependencies": {
-    "@types/react": "~19.1.0",
+    "@types/leaflet": "^1.9.21",
+    "@types/react": "~19.2.10",
+    "@types/react-leaflet": "^2.8.3",
+    "baseline-browser-mapping": "^2.9.19",
     "typescript": "~5.9.2"
   },
   "private": true

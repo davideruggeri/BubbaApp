@@ -1,0 +1,41 @@
+{
+    "indexes": [
+        {
+            "collectionGroup": "indirizzario",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "lastName",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "firstName",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "financial",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "anticipata",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "rimborsata",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "anticipatoDa",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "data",
+                    "order": "ASCENDING"
+                }
+            ]
+        }
+    ],
+    "fieldOverrides": []
+}

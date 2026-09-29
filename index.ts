@@ -1,4 +1,5 @@
 import { registerRootComponent } from 'expo';
+import './assets/leaflet_custom.css';
 
 import App from './App';
 
