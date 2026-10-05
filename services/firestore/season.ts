@@ -16,6 +16,7 @@ import {
     getStagioneFromDate, getSeasonStartDate, getSeasonEndDate, assignTiedRanks
 } from './utils';
 import { recalculateAllAttendanceCounts } from './attendance';
+import { autoArchiveWinterLeagueIfNeeded } from './league';
 
 
 // --- Stagione Corrente ---
@@ -175,6 +176,13 @@ export const chiudiStagione = async (nuovaStagione: string): Promise<void> => {
             await generateBubbaWrapped(stagioneCorrente);
         } catch (wrappedErr) {
             console.warn("Errore generazione automatica Bubba Wrapped durante chiusura:", wrappedErr);
+        }
+
+        try {
+            await autoArchiveWinterLeagueIfNeeded();
+            console.log("Winter League archiviata e pulita automaticamente.");
+        } catch (leagueErr) {
+            console.warn("Errore archiviazione automatica Winter League durante chiusura stagione:", leagueErr);
         }
 
         const currentSeasonDocRef = doc(db, 'impostazione', 'stagione_corrente');

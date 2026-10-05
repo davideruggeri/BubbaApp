@@ -24,6 +24,7 @@ import FinancialScreen from './screens/FinancialScreen'; // Import FinancialScre
 import SettingsScreen from './screens/SettingsScreen'; // Import SettingsScreen
 import WorldMapScreen from './screens/WorldMapScreen'; // Import WorldMapScreen
 import AnalisiPartitaScreen from './screens/AnalisiPartitaScreen'; // Import AnalisiPartitaScreen
+import TournamentDetailScreen from './screens/TournamentDetailScreen';
 import MatchDetailScreen from './screens/MatchDetailScreen';
 import LiveMatchScreen from './screens/LiveMatchScreen'; // Import MatchDetailScreen
 import TacticsGameScreen from './screens/TacticsGameScreen'; // Import TacticsGameScreen
@@ -63,6 +64,7 @@ export type RootStackParamList = {
   Settings: undefined;
   WorldMap: undefined;
   AnalisiPartita: undefined;
+  TournamentDetail: { tournamentName: string };
   MatchDetail: { match: MatchAnalysis };
   LiveMatch: { matchId: string; initialMatch: MatchAnalysis; mode?: 'normal' | 'live' };
   TacticsGame: undefined;
@@ -213,6 +215,7 @@ function RootNavigator() {
             <Stack.Screen name="Settings" component={SettingsScreen} />
             <Stack.Screen name="WorldMap" component={WorldMapScreen} />
             <Stack.Screen name="AnalisiPartita" component={AnalisiPartitaScreen} />
+            <Stack.Screen name="TournamentDetail" component={TournamentDetailScreen} options={{ headerShown: false }} />
             <Stack.Screen name="MatchDetail" component={MatchDetailScreen} options={{ headerShown: false }} />
             <Stack.Screen name="LiveMatch" component={LiveMatchScreen} options={{ headerShown: false }} />
             <Stack.Screen name="TacticsGame" component={TacticsGameScreen} options={{ headerShown: false }} />

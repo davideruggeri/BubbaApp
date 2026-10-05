@@ -208,11 +208,12 @@ export type PastLeague = {
     winnerId: string; // Member ID of the winner
     standings: PastLeagueMember[];
     totalParticipants: number;
+    bonuses?: LeagueBonus[];
 };
 
 export type MatchStatType = 'M' | 'A' | 'C' | 'D' | 'T' | 'E' | 'B' | 'S';
 
-export type MatchEvent = {
+export type LegacyMatchEvent = {
     id: string;
     playerId: string;
     type: MatchStatType;
@@ -221,7 +222,7 @@ export type MatchEvent = {
 
 export type MatchPoint = {
     id: string;
-    events: MatchEvent[];
+    events: LegacyMatchEvent[];
     ourScore: number;
     theirScore: number;
     type: 'offense' | 'defense';
@@ -256,6 +257,28 @@ export type MatchStatsSettings = {
     defense: StatDefinition[];
 };
 
+export type MatchEvent = {
+    k: 'start' | 'pull' | 'goal' | 'call' | 'tt' | 'td' | 'ts' | 'tx' | 'd' | 'err' | 'tg' | 'line' | 'dset' | 'touch' | 'halftime';
+    t?: number;
+    line?: string[]; // array di id giocatori
+    o?: boolean; // vero se partiamo in attacco
+    team?: 'us' | 'them';
+    p?: string | null; // id giocatore
+    s?: string; // id marcatore gol
+    a?: string | null; // id assist
+    x?: number | null; // coordinata x in metri
+    y?: number | null; // coordinata y in metri
+    trajectory?: { x: number; y: number }[]; // tracciato curva lancio dal punto di rilascio al punto di caduta
+    v?: string; // valore schema difesa (es. 'Veltroni', 'Zona', 'Uomo')
+    reason?: 'injury' | 'error'; // motivo cambio giocatore: infortunio a metà punto o errore da inizio meta
+};
+
+export type MatchRosterPlayer = {
+    id: string;
+    name: string;
+    g: 'M' | 'F';
+};
+
 export type MatchAnalysis = {
     id: string;
     opponent: string;
@@ -268,9 +291,23 @@ export type MatchAnalysis = {
     ourScore?: number;
     theirScore?: number;
     notes?: string;
+    // Nuova logica eventi (StatistichePartita)
+    events?: MatchEvent[];
+    pullFirst?: 'us' | 'them';
+    firstRatio?: 'M' | 'F';
+    dir0?: 'R' | 'L'; // orientamento iniziale nostro attacco
+    status?: 'scheduled' | 'live' | 'completed';
+    // Associazione Evento
+    isSingleMatch?: boolean;
+    eventId?: string | null;
+    eventName?: string | null;
+    // Roster personalizzato / salvato con la partita
+    customRoster?: MatchRosterPlayer[];
+    // Override manuale tocchi per partita conclusa o recupero dati
+    manualTouches?: Record<string, number>;
+    // Campi legacy per retrocompatibilità opzionale
     players?: MatchPlayer[];
     points?: MatchPoint[];
-    status?: 'scheduled' | 'live' | 'completed';
     currentPossession?: 'offense' | 'defense';
     activePoint?: MatchPoint | null;
     timeouts?: {

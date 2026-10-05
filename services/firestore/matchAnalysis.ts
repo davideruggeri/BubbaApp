@@ -73,10 +73,27 @@ export const subscribeToSingleMatch = (matchId: string, callback: (match: MatchA
     });
 };
 
+function sanitizeForFirestore(obj: any): any {
+    if (obj === undefined) return null;
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) {
+        return obj.map(item => sanitizeForFirestore(item));
+    }
+    const clean: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+        if (value !== undefined) {
+            clean[key] = sanitizeForFirestore(value);
+        }
+    }
+    return clean;
+}
+
 export const addMatchAnalysis = async (match: Omit<MatchAnalysis, 'id'>) => {
     try {
         const stagione = (match as any).stagione || getCachedStagioneCorrente() || (match.date ? getStagioneFromDate(match.date) : getCachedStagioneCorrente());
-        await addDoc(collection(db, 'match_analysis'), { ...match, stagione });
+        const cleanData = sanitizeForFirestore({ ...match, stagione });
+        const docRef = await addDoc(collection(db, 'match_analysis'), cleanData);
+        return docRef.id;
     } catch (error) {
         console.error("Error adding match analysis:", error);
         throw error;
@@ -87,7 +104,8 @@ export const updateMatchAnalysis = async (match: Partial<MatchAnalysis> & { id: 
     try {
         const matchRef = doc(db, 'match_analysis', match.id);
         const { id, ...data } = match;
-        await updateDoc(matchRef, data);
+        const cleanData = sanitizeForFirestore(data);
+        await updateDoc(matchRef, cleanData);
     } catch (error) {
         console.error("Error updating match analysis:", error);
         throw error;

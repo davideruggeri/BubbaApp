@@ -1,1241 +1,3295 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Image, TextInput } from 'react-native';
+// screens/LiveMatchScreen.tsx
+// Interfaccia Live Match e Statistiche per partite di ultimate (CUS Brescia - Bubba)
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+    View,
+    Text,
+    StyleSheet,
+    ScrollView,
+    TouchableOpacity,
+    Modal,
+    TextInput,
+    ActivityIndicator,
+    Alert,
+    useWindowDimensions
+} from 'react-native';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { RootStackParamList } from '../App';
-import { MatchAnalysis, MatchPlayer, MatchPoint, MatchEvent, MatchStatType, updateMatchAnalysis, MatchStatsSettings, getMatchStatsSettings, updateMatchStatsSettings, DEFAULT_STATS_SETTINGS, StatDefinition } from '../services/firestore';
-import { useTheme } from '../context/ThemeContext';
 import ScreenTitle from '../components/ScreenTitle';
+import InteractiveField, { FieldDot, FieldTrajectory } from '../components/InteractiveField';
+import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
+import { RootStackParamList } from '../App';
+import {
+    MatchAnalysis,
+    MatchEvent,
+    MatchRosterPlayer,
+    subscribeToSingleMatch,
+    updateMatchAnalysis,
+    subscribeToMembers,
+    Member
+} from '../services/firestore';
+import { remapEvents } from '../utils/matchImporter';
+import {
+    derive,
+    ratioFor,
+    ratioLabel,
+    attRight,
+    playerStats,
+    teamStats,
+    describeEvent,
+    DSETS,
+    LOC_EVENTS,
+    FIELD,
+    emptyPS
+} from '../utils/statsEngine';
+import { exportAndDownloadXLSX } from '../utils/matchExporter';
 import { showAlert, showConfirmation } from '../utils/alert';
-
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import EditTouchesModal from '../components/EditTouchesModal';
 
 type LiveMatchScreenRouteProp = RouteProp<RootStackParamList, 'LiveMatch'>;
-type LiveMatchScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'LiveMatch'>;
 
 export default function LiveMatchScreen() {
     const { theme } = useTheme();
-    const navigation = useNavigation<LiveMatchScreenNavigationProp>();
+    const { isStaff } = useAuth();
+    const navigation = useNavigation<any>();
     const route = useRoute<LiveMatchScreenRouteProp>();
-    const { matchId, initialMatch, mode } = route.params; // mode is 'normal' or 'live'
-    const isLiveMode = mode === 'live';
+    const { matchId, initialMatch } = route.params;
+    const { width: windowWidth } = useWindowDimensions();
+    const isMobile = windowWidth < 600;
 
-    const [match, setMatch] = useState<MatchAnalysis>({
-        ...initialMatch,
-        rules: initialMatch.rules || {
-            timeoutLimit: initialMatch.surface === 'sabbia' ? '1_per_match' : '1_per_half',
-            scoreLimit: 'standard',
-            halftimeMode: 'standard'
-        }
-    });
-    const [currentPoint, setCurrentPoint] = useState<MatchPoint | null>(initialMatch.activePoint || null);
-    const [activePlayers, setActivePlayers] = useState<string[]>([]); // IDs of players on field
-    const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-    const [isLineupModalVisible, setIsLineupModalVisible] = useState(false);
-    const [pointType, setPointType] = useState<'offense' | 'defense'>(match.currentPossession || 'offense');
-    const [currentPossession, setCurrentPossession] = useState<'offense' | 'defense'>(match.currentPossession || 'offense');
+    const [match, setMatch] = useState<MatchAnalysis>(initialMatch);
+    const [allMembers, setAllMembers] = useState<Member[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    // Configurable Stats State
-    const [statsSettings, setStatsSettings] = useState<MatchStatsSettings>(DEFAULT_STATS_SETTINGS);
-    const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
-    const [editingStat, setEditingStat] = useState<{ context: 'offense' | 'defense', index: number, stat: StatDefinition } | null>(null);
+    // Tab attiva: se la partita è completata apri direttamente le statistiche, altrimenti il live
+    const [activeTab, setActiveTab] = useState<'play' | 'stats'>(initialMatch?.status === 'completed' ? 'stats' : 'play');
 
-    // Derived state
-    const [isAssistModalVisible, setIsAssistModalVisible] = useState(false);
-    const [pendingScorerId, setPendingScorerId] = useState<string | null>(null);
+    // Stato temporaneo per la registrazione live
+    const [lineSel, setLineSel] = useState<string[]>([]);
+    const [lineStartO, setLineStartO] = useState<boolean | null>(null);
+    const [pullPuller, setPullPuller] = useState<string | null>(null);
+    const [statsFilter, setStatsFilter] = useState<string>('all');
+    const [toStatsFilter, setToStatsFilter] = useState<'all' | 'toUs' | 'toThem'>('all');
+    const [toOriginFilter, setToOriginFilter] = useState<'all' | 'O' | 'D'>('all');
+    const [toFieldFlip, setToFieldFlip] = useState<boolean>(false);
+    const [pendingTrajectory, setPendingTrajectory] = useState<{ x: number; y: number }[] | null>(null);
+    const [statsSortKey, setStatsSortKey] = useState<string>('pts');
+    const [statsSortAsc, setStatsSortAsc] = useState<boolean>(false);
+    const [modalLineVisible, setModalLineVisible] = useState(false);
+    const [subStep, setSubStep] = useState<'roster' | 'reason'>('roster');
+    const [subReason, setSubReason] = useState<'injury' | 'error'>('injury');
+    const [modalRosterVisible, setModalRosterVisible] = useState(false);
+    const [modalTouchesVisible, setModalTouchesVisible] = useState(false);
+    const [remappingPlayer, setRemappingPlayer] = useState<{ id: string; name: string; g: 'M' | 'F' } | null>(null);
+    const [memberSearchQuery, setMemberSearchQuery] = useState('');
+    const [allMemberSearchQuery, setAllMemberSearchQuery] = useState('');
+    const [newGuestName, setNewGuestName] = useState('');
+    const [newGuestGender, setNewGuestGender] = useState<'M' | 'F'>('F');
+    const [dismissedHalfTimePrompt, setDismissedHalfTimePrompt] = useState(false);
 
-    // Timer State
-    const [timer, setTimer] = useState(0);
-    const [isTimerRunning, setIsTimerRunning] = useState(false);
+    // Gestione step interattivi (es: chi ha segnato? chi ha fatto assist? dove è caduto il disco?)
+    const [pending, setPending] = useState<{
+        step: 'goal_s' | 'goal_a' | 'tt' | 'td' | 'ts' | 'd' | 'call' | 'where';
+        s?: string; // scorer
+        a?: string | null; // assistman
+        e?: MatchEvent; // evento in attesa di coordinata x/y
+    } | null>(null);
 
-    // Derived state
-    const ourScore = match.ourScore || 0;
-    const theirScore = match.theirScore || 0;
-    const maxPlayers = match.surface === 'sabbia' ? 5 : 7;
-
+    // Sottoscrizioni Firestore
     useEffect(() => {
-        loadStatsSettings();
-    }, []);
-
-    // Timer Logic
-    useEffect(() => {
-        let interval: NodeJS.Timeout;
-        if (isTimerRunning && currentPoint?.startTime) {
-            interval = setInterval(() => {
-                const now = Date.now();
-                const elapsed = Math.floor((now - currentPoint.startTime!) / 1000);
-                setTimer(elapsed);
-            }, 1000);
-        }
-        return () => clearInterval(interval);
-    }, [isTimerRunning, currentPoint]);
-
-    // Start/Stop Timer based on Point Status
-    useEffect(() => {
-        if (currentPoint && match.status === 'live') {
-            setIsTimerRunning(true);
-            if (currentPoint.startTime) {
-                const now = Date.now();
-                const elapsed = Math.floor((now - currentPoint.startTime) / 1000);
-                setTimer(elapsed);
+        const unsubscribeMatch = subscribeToSingleMatch(matchId, updated => {
+            if (updated) {
+                setMatch(updated);
             }
-        } else {
-            setIsTimerRunning(false);
-            setTimer(0);
-        }
-    }, [currentPoint, match.status]);
-
-    const formatTime = (seconds: number) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
-
-    const loadStatsSettings = async () => {
-        if (match.statsSettings) {
-            setStatsSettings(match.statsSettings);
-        } else {
-            const settings = await getMatchStatsSettings();
-            setStatsSettings(settings);
-        }
-    };
-
-    const handleStartPoint = async (type: 'offense' | 'defense') => {
-        setPointType(type);
-        setCurrentPossession(type);
-
-        // Persist initial possession
-        try {
-            const updatedMatch = {
-                ...match,
-                currentPossession: type,
-                status: isLiveMode ? 'live' as const : match.status // Only set live if in live mode
-            };
-            await updateMatchAnalysis(updatedMatch);
-            setMatch(updatedMatch);
-        } catch (e) {
-            console.error("Error saving start point possession", e);
-        }
-
-        setIsLineupModalVisible(true);
-    };
-
-    const copyLastLineup = () => {
-        if (match.points && match.points.length > 0) {
-            const lastPoint = match.points[match.points.length - 1];
-            setActivePlayers(lastPoint.players);
-        } else {
-            showAlert("Info", "Nessun punto precedente da cui copiare.");
-        }
-    };
-
-    const togglePlayerInLineup = (playerId: string) => {
-        setActivePlayers(prev => {
-            if (prev.includes(playerId)) {
-                return prev.filter(id => id !== playerId);
-            } else {
-                if (prev.length >= maxPlayers) {
-                    showAlert("Limite Raggiunto", `Massimo ${maxPlayers} giocatori.`);
-                    return prev;
-                }
-                return [...prev, playerId];
-            }
+            setLoading(false);
         });
-    };
 
-    const getRequiredGenderCounts = () => {
-        if (match.division !== 'mixed' || !match.startingGender) return null;
-
-        const pointIndex = match.points ? match.points.length : 0;
-        const isStartGenderMajority = Math.floor((pointIndex + 1) / 2) % 2 === 0;
-        const majorityGender = isStartGenderMajority ? match.startingGender : (match.startingGender === 'M' ? 'F' : 'M');
-
-        const totalPlayers = maxPlayers;
-        const majorityCount = Math.ceil(totalPlayers / 2);
-        const minorityCount = Math.floor(totalPlayers / 2);
-
-        return {
-            majorityGender,
-            majorityCount,
-            minorityCount
-        };
-    };
-
-    const confirmLineup = () => {
-        if (activePlayers.length === 0) {
-            showAlert("Attenzione", "Seleziona almeno un giocatore.");
-            return;
-        }
-        if (activePlayers.length > maxPlayers) {
-            showAlert("Attenzione", `Massimo ${maxPlayers} giocatori in campo.`);
-            return;
-        }
-
-        // Gender Ratio Validation
-        const requirements = getRequiredGenderCounts();
-        if (requirements) {
-            const selectedPlayers = match.players?.filter(p => activePlayers.includes(p.id)) || [];
-            const menCount = selectedPlayers.filter(p => p.gender === 'M').length;
-            const womenCount = selectedPlayers.filter(p => p.gender === 'F').length;
-
-            const { majorityGender, majorityCount, minorityCount } = requirements;
-            const requiredMen = majorityGender === 'M' ? majorityCount : minorityCount;
-            const requiredWomen = majorityGender === 'F' ? majorityCount : minorityCount;
-
-            if (menCount !== requiredMen || womenCount !== requiredWomen) {
-                showAlert(
-                    "Ratio Errato",
-                    `Per questo punto servono:\n${requiredMen} Uomini e ${requiredWomen} Donne.\n\nHai selezionato:\n${menCount} Uomini e ${womenCount} Donne.`
-                );
-                return;
-            }
-        }
-
-        if (currentPoint) {
-            // EDITING EXISTING POINT LINEUP
-            const updatedPoint = {
-                ...currentPoint,
-                players: activePlayers
-            };
-            setCurrentPoint(updatedPoint);
-
-            // Update active point in Firestore
-            const updatedMatch = { ...match, activePoint: updatedPoint };
-            updateMatchAnalysis(updatedMatch).catch(e => console.error("Error updating active point lineup", e));
-            setMatch(updatedMatch);
-
-            setIsLineupModalVisible(false);
-        } else {
-            // STARTING NEW POINT
-            const newPoint: MatchPoint = {
-                id: Date.now().toString(),
-                events: [],
-                ourScore,
-                theirScore,
-                type: pointType, // Uses the type set by handlePointEnd or handleStartPoint
-                players: activePlayers,
-                startTime: Date.now() // Start timer
-            };
-            setCurrentPoint(newPoint);
-
-            // Persist active point
-            const updatedMatch = { ...match, activePoint: newPoint };
-            updateMatchAnalysis(updatedMatch).catch(e => console.error("Error starting new point", e));
-            setMatch(updatedMatch);
-
-            setIsLineupModalVisible(false);
-            setSelectedPlayerId(null);
-        }
-    };
-
-    const handleManualHalftime = async () => {
-        const firstPoint = (match.points && match.points.length > 0) ? match.points[0] : null;
-        if (!firstPoint) return;
-
-        const startingPossession = firstPoint.type;
-        const nextPossessionAfterHalftime = startingPossession === 'offense' ? 'defense' : 'offense';
-
-        let nextType: 'offense' | 'defense' = nextPossessionAfterHalftime;
-        setPointType(nextType);
-        setCurrentPossession(nextType);
-
-        showAlert("HALF TIME", `Cambio Campo!\nPossesso: ${nextType === 'offense' ? 'ATTACCO' : 'DIFESA'}`);
-    };
-
-    const handleEndMatch = async () => {
-        showConfirmation(
-            "Termina Partita",
-            "Sei sicuro di voler terminare la partita?",
-            async () => {
-                try {
-                    const updatedMatch: MatchAnalysis = { ...match, status: 'completed' };
-                    await updateMatchAnalysis(updatedMatch);
-                    setMatch(updatedMatch);
-                    navigation.goBack();
-                } catch (e) {
-                    showAlert("Errore", "Impossibile terminare la partita.");
-                }
-            }
-        );
-    };
-
-    const handlePointEnd = async (point: MatchPoint, weScored: boolean, scorerId?: string, assistId?: string) => {
-        // 1. Update Score
-        const newOurScore = weScored ? ourScore + 1 : ourScore;
-        const newTheirScore = weScored ? theirScore : theirScore + 1;
-
-        // 2. Finalize Point
-        const finalizedPoint: MatchPoint = {
-            ...point,
-            ourScore: newOurScore,
-            theirScore: newTheirScore,
-            scoredBy: scorerId || null,
-            assistBy: assistId || null,
-            durationSeconds: timer // Save duration
-        };
-
-        // 3. Update Match in Firestore
-        const updatedMatch: MatchAnalysis = {
-            ...match,
-            ourScore: newOurScore,
-            theirScore: newTheirScore,
-            points: [...(match.points || []), finalizedPoint],
-            status: isLiveMode ? 'live' : match.status, // Only set live if in live mode
-            currentPossession: weScored ? 'defense' : 'offense', // Persist next possession
-            activePoint: null // Clear active point
-        };
-
-        try {
-            await updateMatchAnalysis(updatedMatch);
-            setMatch(updatedMatch);
-            setCurrentPoint(null);
-
-            // Auto-Possession Logic
-            let nextType: 'offense' | 'defense' = weScored ? 'defense' : 'offense';
-            setPointType(nextType);
-            setCurrentPossession(nextType);
-
-            setActivePlayers([]); // Clear lineup for next point
-
-            // Half Time Logic
-            const HALF_TIME_SCORE = match.surface === 'sabbia' ? 7 : 8;
-
-            // Trigger ONLY if one team reached the target AND the other hasn't yet (meaning it's the first time)
-            const isFirstTimeReachingHalftime = (newOurScore === HALF_TIME_SCORE && ourScore < HALF_TIME_SCORE && newTheirScore < HALF_TIME_SCORE) ||
-                (newTheirScore === HALF_TIME_SCORE && theirScore < HALF_TIME_SCORE && newOurScore < HALF_TIME_SCORE);
-
-            if (match.rules?.halftimeMode !== 'manual' && isFirstTimeReachingHalftime) {
-                // Logic is the same for both: swap possession relative to START of match
-                const firstPoint = (match.points && match.points.length > 0) ? match.points[0] : finalizedPoint;
-                const startingPossession = firstPoint.type;
-                const nextPossessionAfterHalftime = startingPossession === 'offense' ? 'defense' : 'offense';
-
-                nextType = nextPossessionAfterHalftime;
-                setPointType(nextType);
-                setCurrentPossession(nextType);
-
-                showAlert("HALF TIME", `Punteggio: ${newOurScore} - ${newTheirScore}\nCambio Campo!\nPossesso: ${nextType === 'offense' ? 'ATTACCO' : 'DIFESA'}`);
-            }
-
-            // Match End Logic
-            // Ensure targetScore is a number
-            const defaultTarget = match.surface === 'sabbia' ? 13 : 15;
-            const targetScore = Number(match.targetScore) || defaultTarget;
-
-            // Check if match is over
-            const isScoreReached = newOurScore >= targetScore || newTheirScore >= targetScore;
-            const isNoLimit = match.rules?.scoreLimit === 'no_limit';
-            const isMatchOver = !isNoLimit && isScoreReached;
-
-            if (isMatchOver) {
-                const winner = newOurScore > newTheirScore ? 'Bubba' : (match.opponent || 'Avversario');
-                showConfirmation(
-                    "Partita Terminata!",
-                    `Vince ${winner}!\nPunteggio Finale: ${newOurScore} - ${newTheirScore}`,
-                    async () => {
-                        try {
-                            // Use updatedMatch which contains the latest point
-                            const completedMatch: MatchAnalysis = { ...updatedMatch, status: 'completed' };
-                            await updateMatchAnalysis(completedMatch);
-                            setMatch(completedMatch);
-                            navigation.navigate('MatchDetail', { match: completedMatch });
-                        } catch (e) {
-                            showAlert("Errore", "Impossibile terminare la partita.");
-                        }
-                    },
-                    "OK"
-                );
-            } else {
-                // Automatically open Lineup Modal for the next point if match is not over
-                setIsLineupModalVisible(true);
-            }
-
-        } catch (error) {
-            showAlert("Errore", "Impossibile salvare il punto.");
-        }
-    };
-
-    const handleStatClick = (statDef: StatDefinition) => {
-        if (!currentPoint) return;
-
-        // Use the new flag, default to true if undefined
-        const requiresPlayer = statDef.requiresPlayer !== false;
-
-        if (!selectedPlayerId && requiresPlayer) {
-            showAlert("Seleziona Giocatore", "Tocca un giocatore prima di assegnare una statistica.");
-            return;
-        }
-
-        const newEvent: MatchEvent = {
-            id: Date.now().toString(),
-            playerId: selectedPlayerId || 'opponent',
-            type: statDef.code as MatchStatType,
-            timestamp: Date.now()
-        };
-
-        const updatedPoint = {
-            ...currentPoint,
-            events: [...currentPoint.events, newEvent]
-        };
-
-        // Update active point in Firestore immediately for persistence
-        const updatedMatch = { ...match, activePoint: updatedPoint };
-        updateMatchAnalysis(updatedMatch).catch(e => console.error("Error updating active point events", e));
-        setMatch(updatedMatch);
-
-        if (statDef.effect === 'score_us') {
-            // Special case for Callahan (Challan) - No Assist
-            if (statDef.code === 'C') {
-                const finalPoint: MatchPoint = {
-                    ...updatedPoint,
-                    scoredBy: selectedPlayerId,
-                    assistBy: null
-                };
-                setCurrentPoint(finalPoint);
-                handlePointEnd(finalPoint, true, selectedPlayerId || undefined);
-            } else {
-                // Trigger Assist Flow for normal goals
-                setPendingScorerId(selectedPlayerId);
-                setIsAssistModalVisible(true);
-                setCurrentPoint(updatedPoint);
-            }
-        } else if (statDef.effect === 'score_them') {
-            setCurrentPoint(updatedPoint);
-            handlePointEnd(updatedPoint, false);
-        } else if (statDef.effect === 'turnover' || statDef.effect === 'switch_possession') {
-            setCurrentPoint(updatedPoint);
-            setCurrentPossession(prev => prev === 'offense' ? 'defense' : 'offense');
-            setSelectedPlayerId(null);
-        } else {
-            setCurrentPoint(updatedPoint);
-            setSelectedPlayerId(null);
-        }
-    };
-
-    const handleAssistSelection = (assistId: string | null) => {
-        if (!currentPoint) return;
-        setIsAssistModalVisible(false);
-        handlePointEnd(currentPoint, true, pendingScorerId || undefined, assistId || undefined);
-        setPendingScorerId(null);
-    };
-
-    const handleRemoveTimeout = async (who: 'our' | 'their') => {
-        const currentTimeouts = match.timeouts || { our: [], their: [] };
-        const teamTimeouts = currentTimeouts[who] || [];
-
-        if (teamTimeouts.length === 0) {
-            showAlert("Info", "Nessun timeout da rimuovere.");
-            return;
-        }
-
-        showConfirmation(
-            "Rimuovi Timeout",
-            `Vuoi rimuovere l'ultimo timeout chiamato da ${who === 'our' ? 'Bubba' : 'Avversario'}?`,
-            async () => {
-                const updatedTeamTimeouts = [...teamTimeouts];
-                updatedTeamTimeouts.pop();
-
-                const updatedTimeouts = {
-                    ...currentTimeouts,
-                    [who]: updatedTeamTimeouts
-                };
-
-                const updatedMatch = { ...match, timeouts: updatedTimeouts };
-
-                try {
-                    await updateMatchAnalysis(updatedMatch);
-                    setMatch(updatedMatch);
-                    showAlert("Successo", "Timeout rimosso.");
-                } catch (e) {
-                    showAlert("Errore", "Impossibile rimuovere il timeout.");
-                }
-            }
-        );
-    };
-
-    const togglePossession = async () => {
-        const newPossession = currentPossession === 'offense' ? 'defense' : 'offense';
-
-        // Update local state
-        setCurrentPossession(newPossession);
-        setPointType(newPossession);
-
-        // Update match state in Firestore
-        const updatedMatch: MatchAnalysis = { ...match, currentPossession: newPossession };
-        try {
-            await updateMatchAnalysis(updatedMatch);
-            setMatch(updatedMatch);
-        } catch (e) {
-            console.error("Error updating possession toggle", e);
-            showAlert("Errore", "Impossibile aggiornare il possesso.");
-        }
-    };
-
-    const handleTimeout = async (who: 'our' | 'their') => {
-        const HALF_TIME_SCORE = match.surface === 'sabbia' ? 7 : 8;
-        const currentHalf = (ourScore < HALF_TIME_SCORE && theirScore < HALF_TIME_SCORE) ? 'first' : 'second';
-
-        const currentTimeouts = match.timeouts || { our: [], their: [] };
-        const teamTimeouts = currentTimeouts[who] || [];
-        let limitCount = 1;
-        let limitScope = 'match';
-
-        const limit = match.rules?.timeoutLimit || (match.surface === 'sabbia' ? '1_per_match' : '1_per_half');
-
-        if (typeof limit === 'object' && limit !== null) {
-            limitCount = limit.count;
-            limitScope = limit.scope;
-        } else if (limit === '1_per_half') {
-            limitCount = 1;
-            limitScope = 'half';
-        } else if (limit === '1_per_match') {
-            limitCount = 1;
-            limitScope = 'match';
-        } else if (limit === 'none') {
-            limitCount = 999;
-        }
-
-        if (limitScope === 'match') {
-            if (teamTimeouts.length >= limitCount) {
-                showAlert("Timeout Esauriti", `Il team ${who === 'our' ? 'Bubba' : 'Avversario'} ha già chiamato ${limitCount} timeout.`);
-                return;
-            }
-        } else {
-            // Per Half
-            const timeoutsInHalf = teamTimeouts.filter(t => t === currentHalf).length;
-            if (timeoutsInHalf >= limitCount) {
-                showAlert("Timeout Esauriti", `Il team ${who === 'our' ? 'Bubba' : 'Avversario'} ha già chiamato ${limitCount} timeout in questo tempo.`);
-                return;
-            }
-        }
-        // If limit is 'none', we just proceed.
-
-        // Record Timeout
-        const updatedTimeouts = {
-            ...currentTimeouts,
-            [who]: [...teamTimeouts, currentHalf]
-        };
-
-        const updatedMatch = { ...match, timeouts: updatedTimeouts };
-
-        try {
-            await updateMatchAnalysis(updatedMatch);
-            setMatch(updatedMatch);
-            showAlert("Timeout Chiamato", `Timeout ${who === 'our' ? 'Bubba' : 'Avversario'} (${currentHalf === 'first' ? '1°' : '2°'} Tempo)`);
-        } catch (e) {
-            showAlert("Errore", "Impossibile salvare il timeout.");
-        }
-    };
-
-
-
-    const undoLastEvent = () => {
-        if (!currentPoint || currentPoint.events.length === 0) return;
-        const updatedEvents = [...currentPoint.events];
-        const removedEvent = updatedEvents.pop();
-
-        const statDef = [...statsSettings.offense, ...statsSettings.defense].find(s => s.code === removedEvent?.type);
-
-        if (statDef && (statDef.effect === 'turnover' || statDef.effect === 'switch_possession')) {
-            setCurrentPossession(prev => prev === 'offense' ? 'defense' : 'offense');
-        }
-
-        const newPointState = { ...currentPoint, events: updatedEvents };
-        setCurrentPoint(newPointState);
-
-        // Update active point in Firestore
-        const updatedMatch = { ...match, activePoint: newPointState };
-        updateMatchAnalysis(updatedMatch).catch(e => console.error("Error undoing event", e));
-        setMatch(updatedMatch);
-    };
-
-    const undoLastPoint = async () => {
-        if (!match.points || match.points.length === 0) {
-            showAlert("Info", "Nessun punto da annullare.");
-            return;
-        }
-
-        showConfirmation(
-            "Annulla Ultimo Punto",
-            "Sei sicuro di voler annullare l'ultimo punto assegnato?",
-            async () => {
-                try {
-                    const updatedPoints = [...(match.points || [])];
-                    const poppedPoint = updatedPoints.pop();
-
-                    if (!poppedPoint) return;
-
-                    // Revert Score
-                    // Since points now store the RESULT score, we need to revert to the score of the PREVIOUS point.
-                    // If there are no previous points, we revert to 0-0.
-                    const previousPoint = updatedPoints.length > 0 ? updatedPoints[updatedPoints.length - 1] : null;
-                    const revertedOurScore = previousPoint ? previousPoint.ourScore : 0;
-                    const revertedTheirScore = previousPoint ? previousPoint.theirScore : 0;
-
-                    // Restore the point as 'live'
-                    // We want to resume playing this point.
-                    // So `currentPoint` should be `poppedPoint` but we need to remove the *scoring event* if it was added?
-                    // `handlePointEnd` doesn't add a scoring event to `point.events` explicitly in the `events` array?
-                    // `handleStatClick` adds events.
-                    // If `score_us` -> `handleAssistSelection` -> `handlePointEnd`. The scoring event (Meta) was added in `handleStatClick`.
-                    // If `score_them` -> `handlePointEnd`. The scoring event (Meta Subita) was added in `handleStatClick`.
-                    // So `poppedPoint.events` contains the scoring event. We should probably remove it so the user can "undo" the action that caused the point to end.
-
-                    const restoredEvents = [...poppedPoint.events];
-                    if (restoredEvents.length > 0) {
-                        restoredEvents.pop(); // Remove the event that ended the point
-                    }
-
-                    const restoredPoint: MatchPoint = {
-                        ...poppedPoint,
-                        events: restoredEvents
-                    };
-
-                    // Determine possession
-                    // If we are restoring a point, we need to know who had possession.
-                    // `poppedPoint.type` stores the possession at the start of that point.
-                    // But wait, during the point, possession might have changed (turnovers).
-                    // We need to replay the events to find current possession?
-                    // Or just trust `poppedPoint.type` is the *starting* type.
-                    // If we restore it, we should probably set `pointType` to `poppedPoint.type`.
-                    // But `currentPossession` needs to be calculated based on events.
-
-                    let calculatedPossession = poppedPoint.type;
-                    restoredEvents.forEach(evt => {
-                        const statDef = [...statsSettings.offense, ...statsSettings.defense].find(s => s.code === evt.type);
-                        if (statDef && (statDef.effect === 'turnover' || statDef.effect === 'switch_possession')) {
-                            calculatedPossession = calculatedPossession === 'offense' ? 'defense' : 'offense';
-                        }
-                    });
-
-                    const updatedMatch = {
-                        ...match,
-                        ourScore: revertedOurScore,
-                        theirScore: revertedTheirScore,
-                        points: updatedPoints,
-                        currentPossession: calculatedPossession
-                    };
-
-                    await updateMatchAnalysis(updatedMatch);
-                    setMatch(updatedMatch);
-
-                    // Restore local state
-                    setCurrentPoint(restoredPoint);
-                    setPointType(poppedPoint.type);
-                    setCurrentPossession(calculatedPossession);
-                    setActivePlayers(poppedPoint.players); // Restore lineup
-
-                    showAlert("Successo", "Ultimo punto annullato. Puoi continuare a giocare.");
-
-                } catch (e) {
-                    console.error(e);
-                    showAlert("Errore", "Impossibile annullare il punto.");
-                }
-            }
-        );
-    };
-
-    const saveSettings = async () => {
-        try {
-            // Save to LOCAL match settings instead of global
-            const updatedMatch = { ...match, statsSettings: statsSettings };
-            await updateMatchAnalysis(updatedMatch);
-            setMatch(updatedMatch);
-            setIsSettingsModalVisible(false);
-            showAlert("Successo", "Impostazioni salvate per questa partita.");
-        } catch (error) {
-            showAlert("Errore", "Impossibile salvare le impostazioni.");
-        }
-    };
-
-    const updateStatSetting = (value: any, field: keyof StatDefinition) => {
-        if (!editingStat) return;
-        const { context, index, stat } = editingStat;
-        const newStat = { ...stat, [field]: value };
-
-        setStatsSettings(prev => {
-            const newList = [...prev[context]];
-            newList[index] = newStat;
-            return { ...prev, [context]: newList };
+        const unsubscribeMembers = subscribeToMembers(m => {
+            setAllMembers(m);
         });
-        setEditingStat({ ...editingStat, stat: newStat });
-    };
 
-    const handleAddStat = (context: 'offense' | 'defense') => {
-        const newStat: StatDefinition = {
-            code: 'N',
-            label: 'Nuova',
-            color: '#999999',
-            effect: 'none',
-            requiresPlayer: true
+        return () => {
+            unsubscribeMatch();
+            unsubscribeMembers();
         };
-        setStatsSettings(prev => ({
-            ...prev,
-            [context]: [...prev[context], newStat]
+    }, [matchId]);
+
+    // Roster effettivo della partita: se specificato customRoster usiamo solo i convocati, altrimenti fallback sui membri
+    // Se un giocatore è collegato a un membro Bubba ufficiale, diamo sempre priorità al suo soprannome
+    const matchRoster = useMemo(() => {
+        if (match.customRoster && match.customRoster.length > 0) {
+            const list = match.customRoster.map(p => {
+                const mem = allMembers.find(m => m.id === p.id);
+                const nickname = mem?.nickname?.trim();
+                const displayName = nickname || mem?.firstName || p.name;
+                const rawG = (p as any).g || (p as any).gender;
+                const assignedGender: 'M' | 'F' = (rawG === 'F' || rawG === 'f') ? 'F' : 'M';
+                return {
+                    id: p.id,
+                    name: displayName,
+                    g: mem?.gender ? (mem.gender === 'F' ? ('F' as const) : ('M' as const)) : assignedGender
+                };
+            });
+            list.sort((a, b) => (a.g === 'F' ? 0 : 1) - (b.g === 'F' ? 0 : 1) || a.name.localeCompare(b.name));
+            return list;
+        }
+
+        const list: { id: string; name: string; g: 'M' | 'F' }[] = allMembers.map(m => ({
+            id: m.id,
+            name: (m.nickname && m.nickname.trim()) ? m.nickname.trim() : m.firstName,
+            g: m.gender === 'F' ? 'F' : 'M'
         }));
-        setEditingStat({ context, index: statsSettings[context].length, stat: newStat });
+        list.sort((a, b) => (a.g === 'F' ? 0 : 1) - (b.g === 'F' ? 0 : 1) || a.name.localeCompare(b.name));
+        return list;
+    }, [allMembers, match.customRoster]);
+
+    const playerMap = useMemo(() => {
+        const map: Record<string, { name: string; g: 'M' | 'F' }> = {};
+        for (const p of matchRoster) {
+            map[p.id] = p;
+        }
+        for (const m of allMembers) {
+            if (!map[m.id]) {
+                map[m.id] = {
+                    name: (m.nickname && m.nickname.trim()) ? m.nickname.trim() : m.firstName,
+                    g: m.gender === 'F' ? 'F' : 'M'
+                };
+            }
+        }
+        if (match.customRoster) {
+            for (const p of match.customRoster) {
+                if (!map[p.id]) {
+                    const rawG = (p as any).g || (p as any).gender;
+                    map[p.id] = {
+                        name: p.name,
+                        g: (rawG === 'F' || rawG === 'f') ? 'F' : 'M'
+                    };
+                }
+            }
+        }
+        return map;
+    }, [matchRoster, allMembers, match.customRoster]);
+
+    const filteredMembersToRemap = useMemo(() => {
+        if (!memberSearchQuery.trim()) return allMembers;
+        const q = memberSearchQuery.toLowerCase();
+        return allMembers.filter(m =>
+            (m.nickname && m.nickname.toLowerCase().includes(q)) ||
+            (m.firstName && m.firstName.toLowerCase().includes(q)) ||
+            (m.lastName && m.lastName.toLowerCase().includes(q))
+        );
+    }, [allMembers, memberSearchQuery]);
+
+    const filteredAllMembers = useMemo(() => {
+        if (!allMemberSearchQuery.trim()) return allMembers;
+        const q = allMemberSearchQuery.toLowerCase();
+        return allMembers.filter(m =>
+            (m.nickname && m.nickname.toLowerCase().includes(q)) ||
+            (m.firstName && m.firstName.toLowerCase().includes(q)) ||
+            (m.lastName && m.lastName.toLowerCase().includes(q))
+        );
+    }, [allMembers, allMemberSearchQuery]);
+
+    const P = (id?: string | null) => {
+        if (!id) return { id: '', name: '?', g: 'M' as const };
+        const found = playerMap[id];
+        if (found) return found;
+        const customP = match.customRoster?.find(x => x.id === id);
+        if (customP) {
+            const rawG = (customP as any).g || (customP as any).gender;
+            return {
+                id,
+                name: customP.name,
+                g: (rawG === 'F' || rawG === 'f') ? ('F' as const) : ('M' as const)
+            };
+        }
+        return { id, name: '?', g: 'M' as const };
     };
 
-    const handleDeleteStat = () => {
-        if (!editingStat) return;
-        const { context, index } = editingStat;
+    const isCompleted = match.status === 'completed';
+    const canEdit = isStaff && !isCompleted;
 
+    // Derivazione stato di gioco ed eventi
+    const st = useMemo(() => {
+        return derive(match);
+    }, [match]);
+
+    const pStats = useMemo(() => {
+        return playerStats([match]);
+    }, [match]);
+
+    const tStats = useMemo(() => {
+        return teamStats(match);
+    }, [match]);
+
+    // Funzione di push evento su Firestore (append-only)
+    const pushEvent = async (ev: MatchEvent) => {
+        if (isCompleted) {
+            showAlert("Partita Terminata", "Tocca prima 'Riapri' in alto per poter registrare o modificare le azioni della partita.");
+            return;
+        }
+
+        const currentEvents = match.events ? [...match.events] : [];
+        const newEvent: MatchEvent = { ...ev, t: Date.now() };
+        currentEvents.push(newEvent);
+
+        const newDerive = derive({ pullFirst: match.pullFirst, events: currentEvents });
+        const updatedMatch: Partial<MatchAnalysis> & { id: string } = {
+            id: match.id,
+            events: currentEvents,
+            ourScore: newDerive.score.us,
+            theirScore: newDerive.score.them,
+            status: match.status === 'scheduled' ? 'live' : match.status
+        };
+
+        try {
+            await updateMatchAnalysis(updatedMatch);
+        } catch (e) {
+            console.error("Errore salvataggio evento su Firestore:", e);
+            showAlert("Errore", "Impossibile salvare l'evento sul database.");
+        }
+    };
+
+    // Annulla ultimo evento (Undo)
+    const handleUndo = async () => {
+        if (!canEdit) {
+            showAlert("Partita Terminata", "Tocca prima 'Riapri' in alto per poter modificare o annullare eventi.");
+            return;
+        }
+
+        if (pending) {
+            setPending(null);
+            return;
+        }
+
+        if (!match.events || !match.events.length) return;
+
+        const currentEvents = [...match.events];
+        const lastEv = currentEvents.pop();
+
+        const newDerive = derive({ pullFirst: match.pullFirst, events: currentEvents });
+        const updatedMatch: Partial<MatchAnalysis> & { id: string } = {
+            id: match.id,
+            events: currentEvents,
+            ourScore: newDerive.score.us,
+            theirScore: newDerive.score.them
+        };
+
+        try {
+            await updateMatchAnalysis(updatedMatch);
+            if (lastEv && lastEv.k === 'start' && lastEv.line) {
+                setLineSel(lastEv.line.slice());
+                setLineStartO(!!lastEv.o);
+            }
+        } catch (e) {
+            showAlert("Errore", "Impossibile annullare l'evento.");
+        }
+    };
+
+    // Inverti rapporto ABBA iniziale
+    const handleFlipRatio = async () => {
+        if (!canEdit) return;
+        const newRatio: 'M' | 'F' = (match.firstRatio || 'F') === 'F' ? 'M' : 'F';
+        try {
+            await updateMatchAnalysis({ id: match.id, firstRatio: newRatio });
+        } catch (e) {
+            showAlert("Errore", "Impossibile invertire il rapporto.");
+        }
+    };
+
+    // Inverti orientamento iniziale del campo
+    const handleFlipDir = async () => {
+        if (!canEdit) return;
+        const newDir: 'R' | 'L' = (match.dir0 || 'R') === 'R' ? 'L' : 'R';
+        try {
+            await updateMatchAnalysis({ id: match.id, dir0: newDir });
+        } catch (e) {
+            showAlert("Errore", "Impossibile invertire la direzione del campo.");
+        }
+    };
+
+    // Prompt per proposta Half Time quando una squadra raggiunge 7 punti
+    useEffect(() => {
+        if (!canEdit || isCompleted) return;
+        if (!st.halfTimeDone && !dismissedHalfTimePrompt && st.phase === 'line' && (st.score.us >= 7 || st.score.them >= 7)) {
+            showConfirmation(
+                'Metà Partita (Half Time)',
+                `Una squadra ha raggiunto 7 punti (${st.score.us} - ${st.score.them}). Vuoi attivare l'Half Time adesso? L'attacco/difesa per il prossimo punto verrà invertito rispetto all'avvio della partita.`,
+                () => {
+                    setLineStartO(null);
+                    pushEvent({ k: 'halftime' });
+                },
+                'Sì, attiva Half Time',
+                'No, continua',
+                () => {
+                    setDismissedHalfTimePrompt(true);
+                }
+            );
+        }
+    }, [st.score.us, st.score.them, st.halfTimeDone, dismissedHalfTimePrompt, st.phase, canEdit, isCompleted]);
+
+    const handleTriggerHalfTime = () => {
         showConfirmation(
-            "Elimina Statistica",
-            "Eliminare questa statistica?",
+            'Attiva Half Time (Intervallo)',
+            `Vuoi chiamare l'Half Time adesso? I ruoli (attacco/difesa) per il prossimo punto verranno invertiti rispetto al punto di avvio partita.`,
             () => {
-                setStatsSettings(prev => {
-                    const newList = [...prev[context]];
-                    newList.splice(index, 1);
-                    return { ...prev, [context]: newList };
-                });
-                setEditingStat(null);
+                setLineStartO(null);
+                pushEvent({ k: 'halftime' });
             },
-            "Elimina"
+            'Sì, attiva Half Time',
+            'Annulla'
         );
     };
 
-    const renderStatButton = (statDef: StatDefinition) => (
-        <TouchableOpacity
-            key={statDef.code}
-            style={[styles.statButton, { backgroundColor: statDef.color }]}
-            onPress={() => handleStatClick(statDef)}
-        >
-            <Text style={styles.statButtonText}>{statDef.code}</Text>
-            <Text style={styles.statButtonLabel}>{statDef.label}</Text>
-        </TouchableOpacity>
-    );
+    // Termina o riapri partita
+    const handleToggleDone = async () => {
+        const isDone = match.status === 'completed';
+        const newStatus = isDone ? 'live' : 'completed';
+        const label = isDone ? 'Riapri' : 'Termina';
 
-    return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            <View style={[styles.header, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border, flexDirection: 'column', alignItems: 'stretch' }]}>
-                <ScreenTitle
-                    title="LIVE MATCH"
-                    onBack={() => navigation.goBack()}
-                    rightAction={{
-                        icon: require('../assets/gear.png'),
-                        onPress: () => setIsSettingsModalVisible(true),
-                        color: theme.colors.text
-                    }}
-                    containerStyle={{ marginBottom: 0 }}
-                />
+        showConfirmation(
+            `${label} Partita`,
+            isDone
+                ? 'Vuoi riaprire questa partita? Le azioni di gioco torneranno modificabili.'
+                : 'Vuoi contrassegnare questa partita come terminata? Tutte le azioni verranno bloccate in sola lettura.',
+            async () => {
+                await updateMatchAnalysis({ id: match.id, status: newStatus });
+            },
+            label
+        );
+    };
 
-                <View style={[styles.scoreContainer, { marginTop: 5, width: '100%' }]}>
-                    <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                        <Text style={[styles.teamName, { color: theme.colors.text }]} numberOfLines={1}>Bubba</Text>
-                        <Text style={[styles.scoreText, { color: theme.colors.text }]}>{ourScore}</Text>
-                        <TouchableOpacity onPress={() => handleTimeout('our')} onLongPress={() => handleRemoveTimeout('our')} style={{ marginTop: 5, padding: 4, backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 5 }}>
-                            <Text style={{ fontSize: 10, color: theme.colors.primary, fontWeight: 'bold' }}>
-                                TO: {match.timeouts?.our?.length || 0}
-                            </Text>
-                        </TouchableOpacity>
+    // Export Excel singola partita
+    const handleExportExcel = async () => {
+        try {
+            await exportAndDownloadXLSX([match], playerMap);
+        } catch (e: any) {
+            showAlert("Errore", e?.message || "Impossibile esportare l'Excel.");
+        }
+    };
+
+    // Riassegna/collega un giocatore (ospite, importato o membro) a un membro ufficiale Bubba
+    const handleRemapPlayer = async (
+        oldPlayer: { id: string; name: string; g: 'M' | 'F' },
+        targetMember: Member
+    ) => {
+        try {
+            const targetGender = targetMember.gender === 'F' ? ('F' as const) : ('M' as const);
+            const targetName = targetMember.nickname || targetMember.firstName;
+            const targetId = targetMember.id;
+
+            const current = match.customRoster && match.customRoster.length > 0
+                ? [...match.customRoster]
+                : matchRoster.map(p => ({ id: p.id, name: p.name, g: p.g }));
+
+            // Se il targetId è già presente, rimuoviamo oldPlayer per evitare duplicati
+            let updatedRoster: MatchRosterPlayer[];
+            if (current.some(p => p.id === targetId)) {
+                updatedRoster = current.filter(p => p.id !== oldPlayer.id);
+            } else {
+                updatedRoster = current.map(p => {
+                    if (p.id === oldPlayer.id) {
+                        return { id: targetId, name: targetName, g: targetGender };
+                    }
+                    return p;
+                });
+                if (!updatedRoster.some(p => p.id === targetId)) {
+                    updatedRoster.push({ id: targetId, name: targetName, g: targetGender });
+                }
+            }
+
+            // Rimappa tutti gli eventi passati (gol, assist, difese, presenze in linea)
+            const updatedEvents = remapEvents(match.events || [], oldPlayer.id, targetId);
+
+            await updateMatchAnalysis({
+                id: match.id,
+                customRoster: updatedRoster,
+                events: updatedEvents
+            });
+
+            setLineSel(prev => prev.map(x => (x === oldPlayer.id ? targetId : x)));
+            setRemappingPlayer(null);
+            setMemberSearchQuery('');
+            showAlert(
+                'Giocatore Collegato',
+                `"${oldPlayer.name}" è stato collegato a "${targetName}". Eventi, presenze e statistiche aggiornati!`
+            );
+        } catch (err: any) {
+            console.error("handleRemapPlayer error:", err);
+            showAlert('Errore', err?.message || 'Impossibile completare il collegamento del giocatore.');
+        }
+    };
+
+    const handleRemovePlayerFromRoster = (playerId: string, playerName: string) => {
+        const hasEvents = (match.events || []).some(
+            ev => ev.p === playerId || ev.s === playerId || ev.a === playerId || (ev.line && ev.line.includes(playerId))
+        );
+
+        const performRemove = async () => {
+            const current = match.customRoster && match.customRoster.length > 0
+                ? [...match.customRoster]
+                : matchRoster.map(p => ({ id: p.id, name: p.name, g: p.g }));
+            const updated = current.filter(p => p.id !== playerId);
+            await updateMatchAnalysis({ id: match.id, customRoster: updated });
+            setLineSel(prev => prev.filter(x => x !== playerId));
+        };
+
+        if (hasEvents) {
+            showConfirmation(
+                'Attenzione',
+                `"${playerName}" ha eventi o punti registrati in questa partita. Rimuoverlo dai convocati non cancellerà gli eventi passati. Continuare?`,
+                performRemove,
+                'Rimuovi'
+            );
+        } else {
+            performRemove();
+        }
+    };
+
+    if (loading) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+                <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 40 }} />
+            </SafeAreaView>
+        );
+    }
+
+    // Informazioni punto corrente
+    const ptsN = st.points.length + 1;
+    const curPt = st.cur;
+    const needRatio = ratioFor(match, curPt ? curPt.n : ptsN);
+    const isAttackingRight = attRight(match, curPt ? curPt.n : ptsN, st.halfTimePoint);
+
+    // Conteggi ratio per la linea attualmente selezionata
+    const fCountInSel = lineSel.filter(id => P(id).g === 'F').length;
+    const mCountInSel = lineSel.length - fCountInSel;
+    const isGenderRatioOk = needRatio === 'F' ? fCountInSel === 3 && mCountInSel === 2 : mCountInSel === 3 && fCountInSel === 2;
+
+    // Applicazione del cambio linea durante il punto (per Infortunio o Correzione Errore Iniziale)
+    const applyLineChange = async (reason: 'injury' | 'error') => {
+        if (isCompleted || !curPt) return;
+
+        if (reason === 'injury') {
+            await pushEvent({ k: 'line', line: lineSel.slice(), reason: 'injury' });
+        } else {
+            const currentEvents = match.events ? [...match.events] : [];
+            let lastStartIndex = -1;
+            for (let i = currentEvents.length - 1; i >= 0; i--) {
+                if (currentEvents[i].k === 'start') {
+                    lastStartIndex = i;
+                    break;
+                }
+            }
+
+            if (lastStartIndex !== -1) {
+                const outPlayers = (curPt.line || []).filter(id => !lineSel.includes(id));
+                const inPlayers = lineSel.filter(id => !(curPt.line || []).includes(id));
+
+                currentEvents[lastStartIndex] = {
+                    ...currentEvents[lastStartIndex],
+                    line: lineSel.slice()
+                };
+
+                if (outPlayers.length === 1 && inPlayers.length === 1) {
+                    const outId = outPlayers[0];
+                    const inId = inPlayers[0];
+                    for (let i = lastStartIndex + 1; i < currentEvents.length; i++) {
+                        if (currentEvents[i].p === outId) {
+                            currentEvents[i] = { ...currentEvents[i], p: inId };
+                        }
+                        if (currentEvents[i].s === outId) {
+                            currentEvents[i] = { ...currentEvents[i], s: inId };
+                        }
+                        if (currentEvents[i].a === outId) {
+                            currentEvents[i] = { ...currentEvents[i], a: inId };
+                        }
+                    }
+                }
+
+                const correctedEvents = currentEvents.filter((ev, idx) => {
+                    if (idx > lastStartIndex && ev.k === 'line') {
+                        return false;
+                    }
+                    return true;
+                });
+
+                const newDerive = derive({ pullFirst: match.pullFirst, events: correctedEvents });
+                const updatedMatch: Partial<MatchAnalysis> & { id: string } = {
+                    id: match.id,
+                    events: correctedEvents,
+                    ourScore: newDerive.score.us,
+                    theirScore: newDerive.score.them,
+                    status: match.status === 'scheduled' ? 'live' : match.status
+                };
+
+                try {
+                    await updateMatchAnalysis(updatedMatch);
+                } catch (e) {
+                    console.error("Errore correzione formazione iniziale:", e);
+                    showAlert("Errore", "Impossibile aggiornare la formazione iniziale sul database.");
+                }
+            }
+        }
+        setModalLineVisible(false);
+    };
+
+    /* ----------------------------------------------------
+       RENDER FASE 1: LINEA (Scelta dei 5 in campo)
+    ---------------------------------------------------- */
+    const renderPhaseLine = () => {
+        if (isCompleted) return null;
+        const startOffense = lineStartO != null ? lineStartO : st.nextO;
+        const lastPt = st.points.length ? st.points[st.points.length - 1] : null;
+        const lastO = [...st.points].reverse().find(p => p.o);
+        const lastD = [...st.points].reverse().find(p => !p.o);
+
+        return (
+            <View style={styles.phaseContainer}>
+                {/* Banner Regola ABBA */}
+                <View style={[styles.ratioBanner, { backgroundColor: needRatio === 'F' ? '#B8338A' : '#1F6FD1' }]}>
+                    <View>
+                        <Text style={styles.ratioSub}>PUNTO {ptsN}</Text>
+                        <Text style={styles.ratioMain}>{ratioLabel(needRatio)}</Text>
                     </View>
-                    <Text style={[styles.scoreLabel, { color: theme.colors.textSecondary, width: 20, textAlign: 'center' }]}>-</Text>
-                    <View style={{ flex: 1, alignItems: 'flex-start' }}>
-                        <Text style={[styles.teamName, { color: theme.colors.text }]} numberOfLines={1}>{match.opponent || 'Avv.'}</Text>
-                        <Text style={[styles.scoreText, { color: theme.colors.text }]}>{theirScore}</Text>
-                        <TouchableOpacity onPress={() => handleTimeout('their')} onLongPress={() => handleRemoveTimeout('their')} style={{ marginTop: 5, padding: 4, backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 5 }}>
-                            <Text style={{ fontSize: 10, color: theme.colors.primary, fontWeight: 'bold' }}>
-                                TO: {match.timeouts?.their?.length || 0}
-                            </Text>
+                    {isStaff && (
+                        <TouchableOpacity style={styles.ratioFlipBtn} onPress={handleFlipRatio}>
+                            <Text style={styles.ratioFlipText}>⇄ Inverti</Text>
                         </TouchableOpacity>
-                    </View>
+                    )}
                 </View>
 
-                {/* Timer Display */}
-                {currentPoint && (
-                    <View style={{ alignItems: 'center', marginTop: 10 }}>
-                        <Text style={{ fontSize: 24, fontWeight: 'bold', color: isTimerRunning ? theme.colors.danger : theme.colors.textSecondary }}>
-                            {formatTime(timer)}
+                {/* Card Selezione Linea */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <View style={styles.rowBetween}>
+                        <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Punto {ptsN} — Scegli Linea</Text>
+                        {isStaff && (
+                            <View style={styles.segment}>
+                                <TouchableOpacity
+                                    style={[styles.segBtn, startOffense && styles.segBtnOn]}
+                                    onPress={() => setLineStartO(true)}
+                                >
+                                    <Text style={[styles.segText, startOffense && styles.segTextOn]}>Attacco</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.segBtn, !startOffense && styles.segBtnOn]}
+                                    onPress={() => setLineStartO(false)}
+                                >
+                                    <Text style={[styles.segText, !startOffense && styles.segTextOn]}>Difesa</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 6, flexWrap: 'wrap', gap: 6 }}>
+                        <Text style={[styles.muted, { color: theme.colors.textSecondary, flex: 1, minWidth: 140 }]}>
+                            {startOffense ? 'Loro battono il pull, noi riceviamo.' : 'Facciamo noi il pull.'}
                         </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            {canEdit && !st.halfTimeDone && (
+                                <TouchableOpacity
+                                    style={styles.halfTimeBtn}
+                                    onPress={handleTriggerHalfTime}
+                                >
+                                    <Text style={styles.halfTimeBtnText}>⏱️ Half Time</Text>
+                                </TouchableOpacity>
+                            )}
+                            {st.halfTimeDone && (
+                                <View style={styles.halfTimeBadge}>
+                                    <Text style={styles.halfTimeBadgeText}>🏁 2° TEMPO</Text>
+                                </View>
+                            )}
+                            {canEdit && (
+                                <TouchableOpacity
+                                    style={{
+                                        paddingHorizontal: 10,
+                                        paddingVertical: 5,
+                                        borderRadius: 8,
+                                        backgroundColor: theme.colors.primary + '18',
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.primary,
+                                    }}
+                                    onPress={() => setModalRosterVisible(true)}
+                                >
+                                    <Text style={{ fontSize: 11, fontWeight: 'bold', color: theme.colors.primary }}>
+                                        👥 Convocati ({matchRoster.length})
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+
+                    {match.events && match.events.length > 0 && match.events[match.events.length - 1]?.k === 'halftime' && (
+                        <View style={styles.halfTimeNotice}>
+                            <Text style={styles.halfTimeNoticeText}>
+                                ⏱️ Half Time attivato: ruoli invertiti rispetto all'avvio della partita!
+                            </Text>
+                        </View>
+                    )}
+
+                    {/* Griglia Giocatori Roster */}
+                    <View style={styles.playerGrid}>
+                        {matchRoster.map(p => {
+                            const isSel = lineSel.includes(p.id);
+                            const ps = pStats[p.id] || emptyPS();
+                            return (
+                                <TouchableOpacity
+                                    key={p.id}
+                                    style={[
+                                        styles.pbtn,
+                                        isMobile ? styles.pbtnMobile : styles.pbtnDesktop,
+                                        isSel && styles.pbtnSel,
+                                        { backgroundColor: isSel ? '#E3ECF5' : theme.colors.card, borderColor: isSel ? '#003057' : theme.colors.border }
+                                    ]}
+                                    onPress={() => {
+                                        if (!canEdit) return;
+                                        setLineSel(prev => (prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]));
+                                    }}
+                                >
+                                    <View style={{ paddingRight: 24 }}>
+                                        <Text style={[styles.pbtnName, { color: theme.colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+                                            {p.name}
+                                        </Text>
+                                    </View>
+                                    <View style={[styles.genderBadge, { backgroundColor: p.g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
+                                        <Text style={styles.genderText}>{p.g}</Text>
+                                    </View>
+                                    <Text style={styles.pbtnSub} numberOfLines={1}>
+                                        {ps.pts} pt ({ps.ptsO}O / {ps.ptsD}D)
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+
+                    {/* Badge di conteggio e validazione */}
+                    <View style={styles.lineBar}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: isMobile ? undefined : 1 }}>
+                            <View
+                                style={[
+                                    styles.chip,
+                                    { backgroundColor: lineSel.length === 5 && isGenderRatioOk ? '#C0D725' : '#FFE1E1' }
+                                ]}
+                            >
+                                <Text style={styles.chipText}>
+                                    {lineSel.length}/5 · {fCountInSel}F {mCountInSel}M
+                                </Text>
+                            </View>
+                            {canEdit && (
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 6 }}>
+                                    {lastPt && (
+                                        <TouchableOpacity
+                                            style={styles.lineUtilBtn}
+                                            onPress={() => setLineSel(lastPt.line.slice())}
+                                        >
+                                            <Text style={styles.lineUtilText}>Precedente</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                    {lastO && (
+                                        <TouchableOpacity
+                                            style={styles.lineUtilBtn}
+                                            onPress={() => setLineSel(lastO.line.slice())}
+                                        >
+                                            <Text style={styles.lineUtilText}>Ultima O</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                    {lastD && (
+                                        <TouchableOpacity
+                                            style={styles.lineUtilBtn}
+                                            onPress={() => setLineSel(lastD.line.slice())}
+                                        >
+                                            <Text style={styles.lineUtilText}>Ultima D</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                    <TouchableOpacity style={styles.lineUtilBtn} onPress={() => setLineSel([])}>
+                                        <Text style={styles.lineUtilText}>Svuota</Text>
+                                    </TouchableOpacity>
+                                </ScrollView>
+                            )}
+                        </View>
+
+                        {canEdit && (
+                            <TouchableOpacity
+                                style={[
+                                    styles.startPtBtn,
+                                    isMobile && styles.startPtBtnMobile,
+                                    { opacity: lineSel.length === 5 && isGenderRatioOk ? 1 : 0.4 }
+                                ]}
+                                disabled={lineSel.length !== 5 || !isGenderRatioOk}
+                                onPress={() => {
+                                    pushEvent({
+                                        k: 'start',
+                                        line: lineSel.slice(),
+                                        o: startOffense
+                                    });
+                                    setLineSel([]);
+                                    setLineStartO(null);
+                                    setPullPuller(null);
+                                }}
+                            >
+                                <Text style={styles.startPtText}>Avvia Punto ▸</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
+    /* ----------------------------------------------------
+       RENDER FASE 2: PULL (Registrazione del pull)
+    ---------------------------------------------------- */
+    const renderPhasePull = () => {
+        if (isCompleted || !curPt) return null;
+        const wePull = !curPt.o;
+
+        const prevDots: FieldDot[] = st.points
+            .filter(p => p.pull && p.pull.x != null && p.pull.team === (wePull ? 'us' : 'them'))
+            .map(p => ({
+                x: p.pull!.x!,
+                y: p.pull!.y!,
+                c: '#B0B2B5',
+                r: 0.8
+            }));
+
+        return (
+            <View style={styles.phaseContainer}>
+                <View style={[styles.statusBanner, { backgroundColor: wePull ? '#003057' : '#C0D725', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+                    <Text style={[styles.statusTitle, { color: wePull ? '#fff' : '#131E29' }]}>
+                        PUNTO {curPt.n} · {wePull ? 'PULL NOSTRO (DIFESA)' : 'PULL LORO (ATTACCO)'}
+                    </Text>
+                    {canEdit && (
+                        <TouchableOpacity
+                            style={[styles.changeLineBtn, { backgroundColor: wePull ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)' }]}
+                            onPress={() => {
+                                setLineSel(curPt.line.slice());
+                                setSubStep('roster');
+                                setSubReason('error');
+                                setModalLineVisible(true);
+                            }}
+                        >
+                            <Text style={[styles.changeLineText, { color: wePull ? '#fff' : '#131E29' }]}>Cambio Linea</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+
+                {wePull && (
+                    <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                        <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Chi effettua il Pull?</Text>
+                        <View style={styles.playerGrid}>
+                            {curPt.line.map(id => {
+                                const isSelected = pullPuller === id;
+                                return (
+                                    <TouchableOpacity
+                                        key={id}
+                                        style={[
+                                            styles.pbtn,
+                                            isSelected && styles.pbtnSel,
+                                            { backgroundColor: isSelected ? '#E3ECF5' : theme.colors.card, borderColor: isSelected ? '#003057' : theme.colors.border }
+                                        ]}
+                                        onPress={() => canEdit && setPullPuller(id)}
+                                    >
+                                        <Text style={[styles.pbtnName, { color: theme.colors.text }]}>{P(id).name}</Text>
+                                        <View style={[styles.genderBadge, { backgroundColor: P(id).g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
+                                            <Text style={styles.genderText}>{P(id).g}</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
                     </View>
                 )}
-            </View>
 
-            {!currentPoint ? (
-                <View style={styles.setupContainer}>
-                    <Text style={[styles.setupTitle, { color: theme.colors.text }]}>
-                        {match.points && match.points.length > 0 ? 'Punto Successivo' : 'Inizia Partita'}
-                    </Text>
-
-                    {match.points && match.points.length > 0 ? (
-                        <>
-                            <TouchableOpacity style={[styles.setupButton, { backgroundColor: theme.colors.primary }]} onPress={() => setIsLineupModalVisible(true)}>
-                                <Text style={styles.setupButtonText}>
-                                    {pointType === 'offense' ? 'Inizia Attacco' : 'Inizia Difesa'}
+                {/* Scelta Schema di Difesa anticipata in fase di Pull */}
+                {wePull && canEdit && (
+                    <View style={[styles.defenseCard, { backgroundColor: theme.colors.card, borderColor: st.dset ? '#E07A1F' : theme.colors.border }]}>
+                        <View style={styles.defenseCardHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={styles.defenseCardIcon}>🛡️</Text>
+                                <Text style={[styles.defenseCardTitle, { color: theme.colors.text }]}>
+                                    SCHEMA DI DIFESA
                                 </Text>
-                            </TouchableOpacity>
+                            </View>
+                            {st.dset ? (
+                                <View style={styles.activeSchemaTag}>
+                                    <Text style={styles.activeSchemaTagText}>ATTIVO: {st.dset.toUpperCase()}</Text>
+                                </View>
+                            ) : (
+                                <View style={styles.missingSchemaTag}>
+                                    <Text style={styles.missingSchemaTagText}>⚠️ SELEZIONA SCHEMA</Text>
+                                </View>
+                            )}
+                        </View>
+                        <View style={styles.defenseSchemaRow}>
+                            {DSETS.map(v => {
+                                const isSel = st.dset === v;
+                                return (
+                                    <TouchableOpacity
+                                        key={v}
+                                        style={[
+                                            styles.defenseSchemaBtn,
+                                            {
+                                                backgroundColor: isSel ? '#E07A1F' : theme.dark ? '#1E293B' : '#F8FAFC',
+                                                borderColor: isSel ? '#C25E0A' : theme.dark ? '#334155' : '#CBD5E1'
+                                            },
+                                            isSel && styles.defenseSchemaBtnActive
+                                        ]}
+                                        onPress={() => {
+                                            if (st.dset !== v) pushEvent({ k: 'dset', v });
+                                        }}
+                                    >
+                                        <Text style={[styles.defenseSchemaText, { color: isSel ? '#FFFFFF' : theme.colors.text }, isSel && styles.defenseSchemaTextActive]}>
+                                            {v}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
+                )}
 
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 0 }]}>
+                            Tocca dove atterra il Pull
+                        </Text>
+                        <Text style={{ fontSize: 11, fontWeight: 'bold', color: wePull ? '#003057' : '#E07A1F' }}>
+                            {wePull ? '🎯 NOSTRO PULL' : '🛡️ PULL AVVERSARIO'}
+                        </Text>
+                    </View>
+                    <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 8 }}>
+                        Tocca sul campo per salvare le coordinate del pull oppure usa Schermo Intero per la massima precisione
+                    </Text>
+                    <InteractiveField
+                        dots={prevDots}
+                        interactive={canEdit}
+                        isPlayMode={false}
+                        flip={isAttackingRight !== wePull}
+                        onFieldPress={coord => {
+                            if (!canEdit) return;
+                            if (wePull && !pullPuller) {
+                                showAlert("Attenzione", "Seleziona prima chi effettua il pull.");
+                                return;
+                            }
+                            pushEvent({
+                                k: 'pull',
+                                team: wePull ? 'us' : 'them',
+                                p: wePull ? pullPuller : null,
+                                x: coord.x,
+                                y: coord.y
+                            });
+                            setPullPuller(null);
+                        }}
+                        onFlipDirection={handleFlipDir}
+                    />
+
+                    {canEdit && (
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
                             <TouchableOpacity
-                                style={{ marginTop: 20, padding: 10 }}
-                                onPress={undoLastPoint}
+                                style={styles.skipBtn}
+                                onPress={() => {
+                                    pushEvent({
+                                        k: 'pull',
+                                        team: wePull ? 'us' : 'them',
+                                        p: null,
+                                        x: null,
+                                        y: null
+                                    });
+                                }}
                             >
-                                <Text style={{ color: theme.colors.textSecondary, textDecorationLine: 'underline' }}>Annulla Ultimo Punto</Text>
-                            </TouchableOpacity>
-                        </>
-                    ) : (
-                        <View style={styles.setupButtons}>
-                            <TouchableOpacity style={[styles.setupButton, { backgroundColor: '#4CAF50' }]} onPress={() => handleStartPoint('offense')}>
-                                <Text style={styles.setupButtonText}>Attacco</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={[styles.setupButton, { backgroundColor: '#F44336' }]} onPress={() => handleStartPoint('defense')}>
-                                <Text style={styles.setupButtonText}>Difesa</Text>
+                                <Text style={styles.skipBtnText}>Salta (Non registrare coordinate)</Text>
                             </TouchableOpacity>
                         </View>
                     )}
                 </View>
-            ) : (
-                <View style={styles.activePointContainer}>
-                    <View style={styles.pointInfo}>
-                        <TouchableOpacity onPress={togglePossession}>
-                            <Text style={{ color: theme.colors.text, fontWeight: 'bold', textDecorationLine: 'underline' }}>
-                                {currentPossession === 'offense' ? 'ATTACCO' : 'DIFESA'}
+            </View>
+        );
+    };
+
+    /* ----------------------------------------------------
+       RENDER FASE 3: PLAY (Azioni durante il possesso)
+    ---------------------------------------------------- */
+    const renderPhasePlay = () => {
+        if (isCompleted || !curPt) return null;
+        const isOffense = st.poss === 'us';
+        const prevDots: FieldDot[] = [];
+        const prevTrajectories: FieldTrajectory[] = [];
+        for (const p of st.points) {
+            for (const e of (p.ev || [])) {
+                const isLoc = e.k === 'tt' || e.k === 'td' || e.k === 'ts' || e.k === 'tx' || e.k === 'd' || e.k === 'call' || e.k === 'err';
+                if (isLoc && e.x != null && e.y != null) {
+                    const isThem = e.k === 'd' || e.k === 'call' || e.k === 'err';
+                    const evColor = isThem
+                        ? '#E07A1F'
+                        : (p.o ? '#C8323C' : '#1F6FD1');
+                    prevDots.push({
+                        x: e.x,
+                        y: e.y,
+                        c: evColor,
+                        r: 0.8
+                    });
+                    if (e.trajectory && e.trajectory.length >= 2) {
+                        prevTrajectories.push({
+                            points: e.trajectory,
+                            color: evColor
+                        });
+                    }
+                }
+            }
+        }
+
+        // Se siamo in attesa di coordinata campo ("DOVE?")
+        if (pending && pending.step === 'where') {
+
+            const currentEvent = pending.e;
+            const isThrowTO = currentEvent?.k === 'tt';
+            const isOpponentError = currentEvent?.k === 'err';
+            const isTrajectoryTO = isThrowTO || isOpponentError;
+            const toColor = isOpponentError ? '#E07A1F' : (curPt.o ? '#C8323C' : '#1F6FD1');
+
+            const eventDesc = isThrowTO ? 'TO LANCIO'
+                : currentEvent?.k === 'td' ? 'TO PRESA'
+                : currentEvent?.k === 'ts' ? 'STALL OUT'
+                : currentEvent?.k === 'd' ? 'DIFESA'
+                : currentEvent?.k === 'call' ? 'CALLAHAN'
+                : isOpponentError ? 'ERRORE LORO'
+                : 'TURNOVER';
+
+            const playerDesc = currentEvent?.p ? ` — ${P(currentEvent.p).name}` : '';
+
+            // Se è presente una traiettoria attiva o appena disegnata
+            const currentTrajectories = [...prevTrajectories];
+            if (pendingTrajectory && pendingTrajectory.length >= 2) {
+                currentTrajectories.push({ points: pendingTrajectory, color: toColor });
+            }
+
+            const isThem = currentEvent?.k === 'd' || currentEvent?.k === 'call' || isOpponentError;
+            const bannerBg = isThem
+                ? '#E07A1F'
+                : (curPt.o ? '#C8323C' : '#1F6FD1');
+
+            return (
+                <View style={styles.phaseContainer}>
+                    <View style={[styles.statusBanner, { backgroundColor: bannerBg }]}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.statusTitle, { color: '#fff' }]}>
+                                {eventDesc}{playerDesc}
                             </Text>
-                        </TouchableOpacity>
-                        <Text style={{ color: theme.colors.text }}> - {activePlayers.length} Giocatori</Text>
-                        <TouchableOpacity onPress={undoLastEvent} style={styles.undoButton}>
-                            <Text style={{ color: theme.colors.primary }}>Annulla</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <TouchableOpacity
-                        style={{ alignSelf: 'center', marginBottom: 10, padding: 5 }}
-                        onPress={() => setIsLineupModalVisible(true)}
-                    >
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, textDecorationLine: 'underline' }}>Modifica Lineup / Sostituzione</Text>
-                    </TouchableOpacity>
-
-                    <ScrollView style={styles.playerList} horizontal showsHorizontalScrollIndicator={false}>
-                        {match.players?.filter(p => activePlayers.includes(p.id)).map(player => (
-                            <TouchableOpacity
-                                key={player.id}
-                                style={[
-                                    styles.playerCard,
-                                    { backgroundColor: theme.colors.card, borderColor: selectedPlayerId === player.id ? theme.colors.primary : 'transparent', borderWidth: 2 }
-                                ]}
-                                onPress={() => setSelectedPlayerId(player.id)}
-                            >
-                                <Text style={[styles.playerName, { color: theme.colors.text }]}>{player.name}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-
-                    <View style={styles.statsGrid}>
-                        <View style={styles.statsRow}>
-                            {statsSettings[currentPossession].map(stat => renderStatButton(stat))}
+                            <Text style={[styles.statusSub, { color: '#fff' }]}>
+                                {isTrajectoryTO
+                                    ? (pendingTrajectory ? 'Traiettoria tracciata! Verifica la freccia verso il punto di caduta' : 'Traccia con il mouse o con il dito la traiettoria verso il punto di caduta')
+                                    : 'Segna la posizione sul campo'}
+                            </Text>
                         </View>
                     </View>
 
-                    <ScrollView style={styles.logContainer}>
-                        {currentPoint.events.slice().reverse().map((event, index) => {
-                            const player = match.players?.find(p => p.id === event.playerId);
-                            const statDef = [...statsSettings.offense, ...statsSettings.defense].find(s => s.code === event.type);
-                            const isTeamStat = statDef?.requiresPlayer === false;
-
-                            return (
-                                <Text key={event.id} style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
-                                    {isTeamStat ? 'SQ' : (player?.name || 'Avversario')}: {event.type}
-                                </Text>
-                            );
-                        })}
-                    </ScrollView>
-                </View>
-            )}
-
-            {/* Lineup Modal */}
-            <Modal visible={isLineupModalVisible} animationType="slide" transparent={true} onRequestClose={() => { }}>
-                <View style={styles.modalContainer}>
-                    <View style={[styles.modalContent, { backgroundColor: theme.colors.card }]}>
-                        <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
-                            {pointType === 'offense' ? 'ATTACCO' : 'DIFESA'} - Lineup ({activePlayers.length}/{maxPlayers})
-                        </Text>
-                        {match.division === 'mixed' && (
-                            <Text style={{ textAlign: 'center', marginBottom: 10, color: theme.colors.textSecondary, fontWeight: 'bold' }}>
-                                {(() => {
-                                    const req = getRequiredGenderCounts();
-                                    if (!req) return '';
-                                    const { majorityGender, majorityCount, minorityCount } = req;
-                                    const men = majorityGender === 'M' ? majorityCount : minorityCount;
-                                    const women = majorityGender === 'F' ? majorityCount : minorityCount;
-                                    return `Richiesti: ${men} Uomini - ${women} Donne`;
-                                })()}
+                    <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 0 }]}>
+                                {isTrajectoryTO ? 'Disegna la traiettoria del disco' : 'Tocca dove è avvenuta l\'azione'}
                             </Text>
-                        )}
+                            <TouchableOpacity
+                                style={styles.promptActionBtn}
+                                onPress={() => {
+                                    setPending(null);
+                                    setPendingTrajectory(null);
+                                }}
+                            >
+                                <Text style={styles.promptActionText}>Annulla</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 8 }}>
+                            {isOpponentError
+                                ? 'Tieni premuto e trascina per disegnare la traiettoria dell\'errore oppure tocca un punto per registrare una Difesa'
+                                : isTrajectoryTO
+                                    ? 'Trascina con il mouse o con il dito sul campo dal punto di rilascio a dove è caduto il disco (la freccia indicherà l\'arrivo)'
+                                    : 'Tocca sul campo per salvare le coordinate oppure tocca "Salta" sotto se non vuoi registrarle'}
+                        </Text>
 
-                        <TouchableOpacity
-                            style={[styles.copyButton, { backgroundColor: theme.colors.card, borderColor: theme.colors.border, borderWidth: 1 }]}
-                            onPress={copyLastLineup}
-                        >
-                            <Text style={{ color: theme.colors.text }}>Copia Lineup Scorsa</Text>
-                        </TouchableOpacity>
+                        <InteractiveField
+                            dots={prevDots}
+                            trajectories={currentTrajectories}
+                            interactive={canEdit}
+                            drawTrajectoryMode={isTrajectoryTO && !pendingTrajectory}
+                            drawingColor={toColor}
+                            isPlayMode={true}
+                            flip={!isAttackingRight}
+                            onTrajectoryComplete={traj => {
+                                setPendingTrajectory(traj);
+                            }}
+                            onFieldPress={coord => {
+                                const e = pending.e!;
+                                setPendingTrajectory(null);
+                                if (e.k === 'err' || (!isOffense && e.k !== 'd' && e.k !== 'call')) {
+                                    if (e.p) {
+                                        setPending(null);
+                                        pushEvent({ k: 'd', p: e.p, x: coord.x, y: coord.y });
+                                    } else {
+                                        setPending({ step: 'd', e: { k: 'd', x: coord.x, y: coord.y } });
+                                    }
+                                } else {
+                                    setPending(null);
+                                    pushEvent({ ...e, x: coord.x, y: coord.y });
+                                }
+                            }}
+                            onFlipDirection={handleFlipDir}
+                        />
 
-                        <ScrollView style={styles.modalList}>
-                            {(() => {
-                                const men = match.players?.filter(p => p.gender === 'M' || !p.gender) || [];
-                                const women = match.players?.filter(p => p.gender === 'F') || [];
-
-                                const renderPlayerItem = (player: MatchPlayer) => {
-                                    const pointsPlayed = match.points?.filter(p => p.players.includes(player.id)).length || 0;
-                                    const totalPoints = match.points?.length || 0;
-                                    return (
-                                        <TouchableOpacity
-                                            key={player.id}
-                                            style={[
-                                                styles.modalItem,
-                                                activePlayers.includes(player.id) && { backgroundColor: theme.colors.primary + '20' }
-                                            ]}
-                                            onPress={() => togglePlayerInLineup(player.id)}
-                                        >
-                                            <View>
-                                                <Text style={[styles.modalItemText, { color: theme.colors.text }]}>
-                                                    {player.name}
-                                                </Text>
-                                                <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
-                                                    Giocate: {pointsPlayed}/{totalPoints}
-                                                </Text>
-                                            </View>
-                                            {activePlayers.includes(player.id) && <Text style={{ color: theme.colors.primary }}>✓</Text>}
-                                        </TouchableOpacity>
-                                    );
-                                };
-
-                                return (
-                                    <>
-                                        {men.length > 0 && (
-                                            <>
-                                                <Text style={{ fontWeight: 'bold', color: theme.colors.text, marginTop: 10, marginBottom: 5 }}>Uomini</Text>
-                                                {men.map(renderPlayerItem)}
-                                            </>
-                                        )}
-                                        {women.length > 0 && (
-                                            <>
-                                                <Text style={{ fontWeight: 'bold', color: theme.colors.text, marginTop: 10, marginBottom: 5 }}>Donne</Text>
-                                                {women.map(renderPlayerItem)}
-                                            </>
-                                        )}
-                                    </>
-                                );
-                            })()}
-                        </ScrollView>
-                        <TouchableOpacity style={[styles.confirmButton, { backgroundColor: theme.colors.primary }]} onPress={confirmLineup}>
-                            <Text style={styles.confirmButtonText}>Conferma ({activePlayers.length})</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.confirmButton, { backgroundColor: theme.colors.card, borderColor: theme.colors.border, borderWidth: 1, marginTop: 10 }]}
-                            onPress={() => setIsLineupModalVisible(false)}
-                        >
-                            <Text style={[styles.confirmButtonText, { color: theme.colors.text }]}>Annulla</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Assist Modal */}
-            <Modal visible={isAssistModalVisible} animationType="fade" transparent={true}>
-                <View style={styles.modalContainer}>
-                    <View style={[styles.modalContent, { backgroundColor: theme.colors.card, height: '60%' }]}>
-                        <Text style={[styles.modalTitle, { color: theme.colors.text }]}>Chi ha fatto Assist?</Text>
-
-                        <TouchableOpacity
-                            style={[styles.modalItem, { justifyContent: 'center', backgroundColor: '#eee' }]}
-                            onPress={() => handleAssistSelection(null)}
-                        >
-                            <Text style={[styles.modalItemText, { color: '#333', fontWeight: 'bold' }]}>Nessun Assist</Text>
-                        </TouchableOpacity>
-
-                        <ScrollView style={styles.modalList}>
-                            {match.players?.filter(p => activePlayers.includes(p.id) && p.id !== pendingScorerId).map(player => (
+                        {/* Barra azioni per confermare o ridisegnare la traiettoria curva */}
+                        {isTrajectoryTO && pendingTrajectory ? (
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, gap: 8 }}>
                                 <TouchableOpacity
-                                    key={player.id}
-                                    style={styles.modalItem}
-                                    onPress={() => handleAssistSelection(player.id)}
+                                    style={{
+                                        backgroundColor: '#E2E8F0',
+                                        paddingHorizontal: 12,
+                                        paddingVertical: 9,
+                                        borderRadius: 8
+                                    }}
+                                    onPress={() => setPendingTrajectory(null)}
                                 >
-                                    <Text style={[styles.modalItemText, { color: theme.colors.text }]}>{player.name}</Text>
+                                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#1E293B' }}>↺ Ridisegna</Text>
                                 </TouchableOpacity>
-                            ))}
-                        </ScrollView>
 
-                        <TouchableOpacity
-                            style={[styles.confirmButton, { backgroundColor: theme.colors.textSecondary, marginTop: 10 }]}
-                            onPress={() => setIsAssistModalVisible(false)} // Cancel? Or force selection?
-                        >
-                            <Text style={styles.confirmButtonText}>Annulla</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Settings Modal */}
-            <Modal visible={isSettingsModalVisible} animationType="slide" transparent={true}>
-                <View style={styles.modalContainer}>
-                    <View style={[styles.modalContent, { backgroundColor: theme.colors.card, height: '90%' }]}>
-                        <Text style={[styles.modalTitle, { color: theme.colors.text }]}>Impostazioni Statistiche</Text>
-
-                        {editingStat ? (
-                            <View style={{ flex: 1 }}>
-                                <Text style={{ color: theme.colors.text, marginBottom: 5 }}>Codice (es. M)</Text>
-                                <TextInput
-                                    style={[styles.input, { color: theme.colors.text, borderColor: theme.colors.border }]}
-                                    value={editingStat.stat.code}
-                                    onChangeText={(t) => updateStatSetting(t, 'code')}
-                                />
-                                <Text style={{ color: theme.colors.text, marginBottom: 5, marginTop: 10 }}>Etichetta (es. Meta)</Text>
-                                <TextInput
-                                    style={[styles.input, { color: theme.colors.text, borderColor: theme.colors.border }]}
-                                    value={editingStat.stat.label}
-                                    onChangeText={(t) => updateStatSetting(t, 'label')}
-                                />
-                                <Text style={{ color: theme.colors.text, marginBottom: 5, marginTop: 10 }}>Descrizione</Text>
-                                <TextInput
-                                    style={[styles.input, { color: theme.colors.text, borderColor: theme.colors.border }]}
-                                    value={editingStat.stat.description || ''}
-                                    onChangeText={(t) => updateStatSetting(t, 'description')}
-                                />
-                                <Text style={{ color: theme.colors.text, marginBottom: 5, marginTop: 10 }}>Colore</Text>
-                                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-                                    {['#4CAF50', '#F44336', '#2196F3', '#FF9800', '#9C27B0', '#607D8B'].map(color => (
-                                        <TouchableOpacity
-                                            key={color}
-                                            style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: color, borderWidth: editingStat.stat.color === color ? 2 : 0, borderColor: theme.colors.text }}
-                                            onPress={() => updateStatSetting(color, 'color')}
-                                        />
-                                    ))}
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <TouchableOpacity
+                                        style={styles.skipBtn}
+                                        onPress={() => {
+                                            const e = pending.e!;
+                                            setPending(null);
+                                            setPendingTrajectory(null);
+                                            pushEvent(e);
+                                        }}
+                                    >
+                                        <Text style={styles.skipBtnText}>Salta</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.skipBtn, { backgroundColor: '#2E8540', borderColor: '#2E8540' }]}
+                                        onPress={() => {
+                                            const e = pending.e!;
+                                            const lastPt = pendingTrajectory[pendingTrajectory.length - 1];
+                                            setPending(null);
+                                            setPendingTrajectory(null);
+                                            pushEvent({
+                                                ...e,
+                                                x: lastPt.x,
+                                                y: lastPt.y,
+                                                trajectory: pendingTrajectory
+                                            });
+                                        }}
+                                    >
+                                        <Text style={[styles.skipBtnText, { color: '#fff', fontWeight: 'bold' }]}>
+                                            Conferma Traiettoria ✓
+                                        </Text>
+                                    </TouchableOpacity>
                                 </View>
-
-                                <Text style={{ color: theme.colors.text, marginBottom: 5, marginTop: 10 }}>Effetto</Text>
-                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5 }}>
-                                    {[
-                                        { label: 'Nessuno', value: 'none' },
-                                        { label: 'Cambio Possesso', value: 'switch_possession' },
-                                        { label: 'Meta (Noi)', value: 'score_us' },
-                                        { label: 'Meta (Loro)', value: 'score_them' },
-                                    ].map((opt) => (
-                                        <TouchableOpacity
-                                            key={opt.value}
-                                            style={{
-                                                padding: 8,
-                                                borderRadius: 8,
-                                                borderWidth: 1,
-                                                borderColor: editingStat.stat.effect === opt.value ? theme.colors.primary : theme.colors.border,
-                                                backgroundColor: editingStat.stat.effect === opt.value ? theme.colors.primary + '20' : 'transparent',
-                                                marginBottom: 5
-                                            }}
-                                            onPress={() => updateStatSetting(opt.value, 'effect')}
-                                        >
-                                            <Text style={{ color: theme.colors.text, fontSize: 12 }}>{opt.label}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </View>
-
-                                <Text style={{ color: theme.colors.text, marginBottom: 5, marginTop: 10 }}>Richiede Giocatore?</Text>
-                                <TouchableOpacity
-                                    style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}
-                                    onPress={() => updateStatSetting(editingStat.stat.requiresPlayer === false, 'requiresPlayer')}
-                                >
-                                    <View style={{
-                                        width: 24, height: 24, borderRadius: 4, borderWidth: 2, borderColor: theme.colors.primary,
-                                        backgroundColor: editingStat.stat.requiresPlayer !== false ? theme.colors.primary : 'transparent',
-                                        alignItems: 'center', justifyContent: 'center'
-                                    }}>
-                                        {editingStat.stat.requiresPlayer !== false && <Text style={{ color: 'white', fontWeight: 'bold' }}>✓</Text>}
-                                    </View>
-                                    <Text style={{ color: theme.colors.text, marginLeft: 10 }}>
-                                        {editingStat.stat.requiresPlayer !== false ? 'Sì, richiede un giocatore' : 'No, statistica di squadra/avversaria'}
-                                    </Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity style={[styles.confirmButton, { backgroundColor: '#d32f2f', marginTop: 10 }]} onPress={handleDeleteStat}>
-                                    <Text style={styles.confirmButtonText}>Elimina Statistica</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity style={[styles.confirmButton, { backgroundColor: theme.colors.primary, marginTop: 20 }]} onPress={() => setEditingStat(null)}>
-                                    <Text style={styles.confirmButtonText}>Fatto</Text>
-                                </TouchableOpacity>
                             </View>
                         ) : (
-                            <ScrollView style={{ flex: 1 }}>
-                                <Text style={[styles.sectionTitle, { color: theme.colors.text, marginTop: 0 }]}>Regole Partita</Text>
-
-                                {/* Timeout Rules */}
-                                <Text style={{ color: theme.colors.text, marginBottom: 5, fontWeight: 'bold' }}>Timeout</Text>
-                                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 15 }}>
-                                    {[
-                                        { label: '1/Tempo', value: '1_per_half' },
-                                        { label: '1/Partita', value: '1_per_match' },
-                                        { label: 'Illimitati', value: 'none' }
-                                    ].map((opt) => (
-                                        <TouchableOpacity
-                                            key={opt.value}
-                                            style={{
-                                                padding: 8,
-                                                borderRadius: 8,
-                                                borderWidth: 1,
-                                                borderColor: (match.rules?.timeoutLimit || (match.surface === 'sabbia' ? '1_per_match' : '1_per_half')) === opt.value ? theme.colors.primary : theme.colors.border,
-                                                backgroundColor: (match.rules?.timeoutLimit || (match.surface === 'sabbia' ? '1_per_match' : '1_per_half')) === opt.value ? theme.colors.primary + '20' : 'transparent'
-                                            }}
-                                            onPress={async () => {
-                                                const updatedMatch = {
-                                                    ...match,
-                                                    rules: {
-                                                        timeoutLimit: opt.value as any,
-                                                        scoreLimit: (match.rules?.scoreLimit || 'standard') as 'standard' | 'no_limit',
-                                                        halftimeMode: (match.rules?.halftimeMode || 'standard') as 'standard' | 'manual'
-                                                    }
-                                                };
-                                                setMatch(updatedMatch);
-                                                await updateMatchAnalysis(updatedMatch);
-                                            }}
-                                        >
-                                            <Text style={{ color: theme.colors.text, fontSize: 12 }}>{opt.label}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </View>
-
-                                {/* Game Mode */}
-                                <Text style={{ color: theme.colors.text, marginBottom: 5, fontWeight: 'bold' }}>Modalità</Text>
-                                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 15 }}>
-                                    {[
-                                        { label: 'Standard', value: 'standard' },
-                                        { label: 'Senza Limiti', value: 'no_limit' }
-                                    ].map((opt) => (
-                                        <TouchableOpacity
-                                            key={opt.value}
-                                            style={{
-                                                padding: 8,
-                                                borderRadius: 8,
-                                                borderWidth: 1,
-                                                borderColor: (match.rules?.scoreLimit || 'standard') === opt.value ? theme.colors.primary : theme.colors.border,
-                                                backgroundColor: (match.rules?.scoreLimit || 'standard') === opt.value ? theme.colors.primary + '20' : 'transparent'
-                                            }}
-                                            onPress={async () => {
-                                                const updatedMatch = {
-                                                    ...match,
-                                                    rules: {
-                                                        timeoutLimit: match.rules?.timeoutLimit || (match.surface === 'sabbia' ? '1_per_match' : '1_per_half'),
-                                                        scoreLimit: opt.value as any,
-                                                        halftimeMode: (opt.value === 'no_limit' ? 'manual' : 'standard') as 'standard' | 'manual'
-                                                    }
-                                                };
-                                                setMatch(updatedMatch);
-                                                await updateMatchAnalysis(updatedMatch);
-                                            }}
-                                        >
-                                            <Text style={{ color: theme.colors.text, fontSize: 12 }}>{opt.label}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </View>
-
-                                {/* Manual Actions */}
-                                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
-                                    <TouchableOpacity
-                                        style={[styles.confirmButton, { backgroundColor: theme.colors.card, borderColor: theme.colors.border, borderWidth: 1, flex: 1, padding: 10, marginTop: 0 }]}
-                                        onPress={() => {
-                                            setIsSettingsModalVisible(false);
-                                            handleManualHalftime();
-                                        }}
-                                    >
-                                        <Text style={{ color: theme.colors.text, fontWeight: 'bold', textAlign: 'center' }}>Chiama Halftime</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={[styles.confirmButton, { backgroundColor: '#d32f2f', flex: 1, padding: 10, marginTop: 0 }]}
-                                        onPress={() => {
-                                            setIsSettingsModalVisible(false);
-                                            handleEndMatch();
-                                        }}
-                                    >
-                                        <Text style={{ color: 'white', fontWeight: 'bold', textAlign: 'center' }}>Termina Partita</Text>
-                                    </TouchableOpacity>
-                                </View>
-
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Attacco</Text>
-                                    <TouchableOpacity onPress={() => handleAddStat('offense')}>
-                                        <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>+ Aggiungi</Text>
-                                    </TouchableOpacity>
-                                </View>
-                                {statsSettings.offense.map((stat, index) => (
-                                    <TouchableOpacity key={index} style={styles.settingItem} onPress={() => setEditingStat({ context: 'offense', index, stat })}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                            <View style={[styles.colorDot, { backgroundColor: stat.color }]} />
-                                            <Text style={{ color: theme.colors.text, fontWeight: 'bold' }}>{stat.code}</Text>
-                                            <Text style={{ color: theme.colors.text }}>{stat.label}</Text>
-                                        </View>
-                                        <Image source={require('../assets/gear.png')} style={[styles.gearIconSmall, { tintColor: theme.colors.textSecondary }]} />
-                                    </TouchableOpacity>
-                                ))}
-
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20 }}>
-                                    <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Difesa</Text>
-                                    <TouchableOpacity onPress={() => handleAddStat('defense')}>
-                                        <Text style={{ color: theme.colors.primary, fontWeight: 'bold' }}>+ Aggiungi</Text>
-                                    </TouchableOpacity>
-                                </View>
-                                {statsSettings.defense.map((stat, index) => (
-                                    <TouchableOpacity key={index} style={styles.settingItem} onPress={() => setEditingStat({ context: 'defense', index, stat })}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                            <View style={[styles.colorDot, { backgroundColor: stat.color }]} />
-                                            <Text style={{ color: theme.colors.text, fontWeight: 'bold' }}>{stat.code}</Text>
-                                            <Text style={{ color: theme.colors.text }}>{stat.label}</Text>
-                                        </View>
-                                        <Image source={require('../assets/gear.png')} style={[styles.gearIconSmall, { tintColor: theme.colors.textSecondary }]} />
-                                    </TouchableOpacity>
-                                ))}
-                            </ScrollView>
-                        )}
-
-                        {!editingStat && (
-                            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                                <TouchableOpacity style={[styles.confirmButton, { backgroundColor: theme.colors.card, borderColor: theme.colors.border, borderWidth: 1, flex: 1 }]} onPress={() => setIsSettingsModalVisible(false)}>
-                                    <Text style={{ color: theme.colors.text, fontWeight: 'bold' }}>Annulla</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={[styles.confirmButton, { backgroundColor: theme.colors.primary, flex: 1 }]} onPress={saveSettings}>
-                                    <Text style={styles.confirmButtonText}>Salva</Text>
+                            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+                                <TouchableOpacity
+                                    style={styles.skipBtn}
+                                    onPress={() => {
+                                        const e = pending.e!;
+                                        setPending(null);
+                                        setPendingTrajectory(null);
+                                        pushEvent(e);
+                                    }}
+                                >
+                                    <Text style={styles.skipBtnText}>Salta (Non registrare coordinate)</Text>
                                 </TouchableOpacity>
                             </View>
                         )}
                     </View>
                 </View>
+            );
+        }
+
+        // Se siamo in attesa di selezione giocatore (Marcatore, Assist, TO, Difesa)
+        let promptText = '';
+        let isPickable = false;
+        let excludeId: string | undefined = undefined;
+
+        if (pending) {
+            const labels: Record<string, string> = {
+                goal_a: 'Chi ha fatto l\'ASSIST?',
+                goal_s: pending.a ? `Assist di ${P(pending.a).name}. Chi ha SEGNATO la meta?` : 'Chi ha SEGNATO la meta?',
+                tt: 'Chi ha sbagliato il LANCIO?',
+                td: 'Chi ha sbagliato la PRESA?',
+                ts: 'Chi ha subito lo STALL OUT?',
+                d: 'Chi ha fatto la DIFESA?',
+                call: 'Chi ha fatto il CALLAHAN?'
+            };
+            promptText = labels[pending.step] || 'Seleziona giocatore:';
+            isPickable = true;
+            if (pending.step === 'goal_s' && pending.a) excludeId = pending.a;
+        }
+
+        return (
+            <View style={styles.phaseContainer}>
+                {/* Banner Possesso Palla */}
+                <View style={[styles.statusBanner, { backgroundColor: isOffense ? '#C0D725' : '#003057' }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={[styles.statusTitle, { color: isOffense ? '#131E29' : '#fff' }]}>
+                            {isOffense ? 'DISCO NOSTRO — ATTACCO' : 'DISCO LORO — DIFESA'}
+                        </Text>
+                        {!isOffense && (
+                            <View style={{
+                                backgroundColor: st.dset ? '#E07A1F' : 'rgba(255,255,255,0.22)',
+                                paddingHorizontal: 10,
+                                paddingVertical: 3,
+                                borderRadius: 12,
+                                borderWidth: 1,
+                                borderColor: st.dset ? '#C25E0A' : 'rgba(255,255,255,0.4)'
+                            }}>
+                                <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                                    {st.dset ? `🛡️ ${st.dset.toUpperCase()}` : '🛡️ SCHEMA ?'}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                    <Text style={[styles.statusSub, { color: isOffense ? '#131E29' : '#fff' }]}>
+                        TO nostri: {curPt.toUs} · TO loro: {curPt.toThem}{isOffense ? ` · Tocchi: ${curPt.touches || 0}${st.holder ? ` · 🥏 ${P(st.holder).name}` : ''}` : ''}
+                    </Text>
+                </View>
+
+                {/* Prompt selezione giocatore in corso */}
+                {pending && (
+                    <View style={styles.promptBanner}>
+                        <Text style={styles.promptTitle}>{promptText}</Text>
+                        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                            {pending.step === 'goal_s' && pending.a && (
+                                <TouchableOpacity
+                                    style={styles.promptActionBtn}
+                                    onPress={() => {
+                                        setPending({ step: 'goal_a' });
+                                    }}
+                                >
+                                    <Text style={styles.promptActionText}>Cambia Assist</Text>
+                                </TouchableOpacity>
+                            )}
+                            {pending.step === 'goal_s' && pending.a && (
+                                <TouchableOpacity
+                                    style={styles.promptActionBtn}
+                                    onPress={() => {
+                                        setPending({ step: 'goal_s', a: null });
+                                    }}
+                                >
+                                    <Text style={styles.promptActionText}>Nessun Assist</Text>
+                                </TouchableOpacity>
+                            )}
+                            {pending.step === 'goal_a' && (
+                                <TouchableOpacity
+                                    style={styles.promptActionBtn}
+                                    onPress={() => {
+                                        setPending({ step: 'goal_s', a: null });
+                                    }}
+                                >
+                                    <Text style={styles.promptActionText}>Nessun Assist</Text>
+                                </TouchableOpacity>
+                            )}
+                            {pending.step === 'd' && pending.e && pending.e.x != null && (
+                                <TouchableOpacity
+                                    style={styles.promptActionBtn}
+                                    onPress={() => {
+                                        const e = pending.e!;
+                                        setPending(null);
+                                        pushEvent({ ...e, p: null });
+                                    }}
+                                >
+                                    <Text style={styles.promptActionText}>Senza Giocatore</Text>
+                                </TouchableOpacity>
+                            )}
+                            <TouchableOpacity style={styles.promptActionBtn} onPress={() => setPending(null)}>
+                                <Text style={styles.promptActionText}>Annulla</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
+
+                {/* I 5 Giocatori in Campo */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <View style={styles.rowBetween}>
+                        <View>
+                            <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: isOffense && !pending ? 2 : 8 }]}>Giocatori in Campo</Text>
+                            {isOffense && !pending && (
+                                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 6 }}>
+                                    Tocca un giocatore per passare il disco 🥏
+                                </Text>
+                            )}
+                        </View>
+                        {canEdit && (
+                            <TouchableOpacity
+                                style={styles.changeLineBtn}
+                                onPress={() => {
+                                    setLineSel(curPt.line.slice());
+                                    setSubStep('roster');
+                                    setSubReason('injury');
+                                    setModalLineVisible(true);
+                                }}
+                            >
+                                <Text style={styles.changeLineText}>Cambio Linea</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    <View style={styles.playerGrid}>
+                        {curPt.line.map(id => {
+                            const isHolder = isOffense && st.holder === id;
+                            const canPick = (isPickable || (canEdit && isOffense && !pending)) && id !== excludeId;
+                            const ps = pStats[id] || emptyPS();
+                            return (
+                                <TouchableOpacity
+                                    key={id}
+                                    style={[
+                                        styles.pbtn,
+                                        isMobile ? styles.pbtnMobile : styles.pbtnDesktop,
+                                        canPick && pending && styles.pbtnPick,
+                                        isHolder && styles.pbtnHolder,
+                                        {
+                                            backgroundColor: isHolder
+                                                ? (theme.dark ? '#1B382B' : '#E8F5E9')
+                                                : (canPick && pending ? (theme.dark ? '#2A3B1D' : '#F6FAD9') : theme.colors.card),
+                                            borderColor: isHolder
+                                                ? '#2E8540'
+                                                : (canPick && pending ? '#C0D725' : (canPick && isOffense ? '#8EA325' : theme.colors.border))
+                                        }
+                                    ]}
+                                    disabled={!canPick}
+                                    onPress={() => {
+                                        if (!pending) {
+                                            if (canEdit && isOffense) {
+                                                pushEvent({ k: 'touch', p: id });
+                                            }
+                                            return;
+                                        }
+                                        if (pending.step === 'goal_a') {
+                                            setPending({ step: 'goal_s', a: id });
+                                        } else if (pending.step === 'goal_s') {
+                                            const assist = pending.a;
+                                            setPending(null);
+                                            pushEvent({ k: 'goal', s: id, a: assist || null });
+                                        } else {
+                                            const stepKey = pending.step;
+                                            if (stepKey === 'tt' || stepKey === 'td' || stepKey === 'ts' || stepKey === 'd' || stepKey === 'call') {
+                                                if (pending.e && pending.e.x != null && pending.e.y != null) {
+                                                    const e = pending.e;
+                                                    setPending(null);
+                                                    pushEvent({ ...e, p: id });
+                                                } else {
+                                                    setPending({ step: 'where', e: { k: stepKey, p: id } });
+                                                }
+                                            }
+                                        }
+                                    }}
+                                >
+                                    <View style={{ paddingRight: 24, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                        {isHolder && <Text style={{ fontSize: 12 }}>🥏</Text>}
+                                        <Text style={[styles.pbtnName, { color: isHolder ? '#2E8540' : theme.colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+                                            {P(id).name}
+                                        </Text>
+                                    </View>
+                                    <View style={[styles.genderBadge, { backgroundColor: P(id).g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
+                                        <Text style={styles.genderText}>{P(id).g}</Text>
+                                    </View>
+                                    <Text style={styles.pbtnSub} numberOfLines={1}>
+                                        {isHolder ? 'DISCO · ' : ''}Tch {ps.touches || 0} · M {ps.goals} · A {ps.ast} · D {ps.ds} · TO {ps.toTot}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                </View>
+
+                {/* Selezione Schema di Difesa in Evidenza (Disponibile in fase di Difesa) */}
+                {canEdit && !pending && !isOffense && (
+                    <View style={[styles.defenseCard, { backgroundColor: theme.colors.card, borderColor: st.dset ? '#E07A1F' : theme.colors.border }]}>
+                        <View style={styles.defenseCardHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={styles.defenseCardIcon}>🛡️</Text>
+                                <Text style={[styles.defenseCardTitle, { color: theme.colors.text }]}>
+                                    SCHEMA DI DIFESA
+                                </Text>
+                            </View>
+                            {st.dset ? (
+                                <View style={styles.activeSchemaTag}>
+                                    <Text style={styles.activeSchemaTagText}>ATTIVO: {st.dset.toUpperCase()}</Text>
+                                </View>
+                            ) : (
+                                <View style={styles.missingSchemaTag}>
+                                    <Text style={styles.missingSchemaTagText}>⚠️ SELEZIONA SCHEMA</Text>
+                                </View>
+                            )}
+                        </View>
+                        <View style={styles.defenseSchemaRow}>
+                            {DSETS.map(v => {
+                                const isSel = st.dset === v;
+                                return (
+                                    <TouchableOpacity
+                                        key={v}
+                                        style={[
+                                            styles.defenseSchemaBtn,
+                                            {
+                                                backgroundColor: isSel ? '#E07A1F' : theme.dark ? '#1E293B' : '#F8FAFC',
+                                                borderColor: isSel ? '#C25E0A' : theme.dark ? '#334155' : '#CBD5E1'
+                                            },
+                                            isSel && styles.defenseSchemaBtnActive
+                                        ]}
+                                        onPress={() => {
+                                            if (st.dset !== v) pushEvent({ k: 'dset', v });
+                                        }}
+                                    >
+                                        <Text style={[styles.defenseSchemaText, { color: isSel ? '#FFFFFF' : theme.colors.text }, isSel && styles.defenseSchemaTextActive]}>
+                                            {v}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
+                )}
+
+
+
+                {/* Azioni di Gioco (Disponibili per Staff quando non c'è pending e la partita è attiva) */}
+                {canEdit && !pending && (
+                    <View style={styles.actionsContainer}>
+                        {isOffense ? (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, styles.actBtnHero, { backgroundColor: '#2E8540' }]}
+                                    onPress={() => {
+                                        if (st.holder) {
+                                            setPending({ step: 'goal_s', a: st.holder });
+                                        } else {
+                                            setPending({ step: 'goal_a' });
+                                        }
+                                    }}
+                                >
+                                    <Text style={styles.actTitle}>⭐ META</Text>
+                                    <Text style={styles.actSub}>
+                                        {st.holder ? `Assist: ${P(st.holder).name}` : 'poi assist + meta'}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#C8323C' }]}
+                                    onPress={() => {
+                                        if (st.holder) {
+                                            setPending({ step: 'where', e: { k: 'tt', p: st.holder } });
+                                        } else {
+                                            setPending({ step: 'tt' });
+                                        }
+                                    }}
+                                >
+                                    <Text style={styles.actTitle}>TO LANCIO</Text>
+                                    <Text style={styles.actSub}>
+                                        {st.holder ? `Lancio: ${P(st.holder).name}` : 'lancio sbagliato / bloccato'}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#C8323C' }]}
+                                    onPress={() => setPending({ step: 'td' })}
+                                >
+                                    <Text style={styles.actTitle}>TO PRESA</Text>
+                                    <Text style={styles.actSub}>presa sbagliata</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#9E2A31' }]}
+                                    onPress={() => setPending({ step: 'ts' })}
+                                >
+                                    <Text style={styles.actTitle}>STALL OUT</Text>
+                                    <Text style={styles.actSub}>fine conteggio</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#9E2A31' }]}
+                                    onPress={() => setPending({ step: 'where', e: { k: 'tx' } })}
+                                >
+                                    <Text style={styles.actTitle}>TO ALTRO</Text>
+                                    <Text style={styles.actSub}>senza giocatore</Text>
+                                </TouchableOpacity>
+                            </>
+                        ) : (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#003057' }]}
+                                    onPress={() => setPending({ step: 'd' })}
+                                >
+                                    <Text style={styles.actTitle}>DIFESA (D)</Text>
+                                    <Text style={styles.actSub}>block / intercetto</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#3D6E99' }]}
+                                    onPress={() => setPending({ step: 'where', e: { k: 'err' } })}
+                                >
+                                    <Text style={styles.actTitle}>ERRORE LORO</Text>
+                                    <Text style={styles.actSub}>turnover avversario</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#5B6570' }]}
+                                    onPress={() => pushEvent({ k: 'tg' })}
+                                >
+                                    <Text style={styles.actTitle}>META LORO</Text>
+                                    <Text style={styles.actSub}>punto subito</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.actBtn, { backgroundColor: '#7A5AA8' }]}
+                                    onPress={() => setPending({ step: 'call' })}
+                                >
+                                    <Text style={styles.actTitle}>CALLAHAN</Text>
+                                    <Text style={styles.actSub}>intercetto in meta</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
+                    </View>
+                )}
+            </View>
+        );
+    };
+
+    /* ----------------------------------------------------
+       RENDER TAB STATISTICHE (Squadra, Giocatori, Mappa Pull)
+    ---------------------------------------------------- */
+    const renderStatsTab = () => {
+        const ids = Object.keys(pStats).sort((a, b) => {
+            const valA = (pStats[a] as any)[statsSortKey] ?? 0;
+            const valB = (pStats[b] as any)[statsSortKey] ?? 0;
+            if (valA !== valB) {
+                return statsSortAsc ? valA - valB : valB - valA;
+            }
+            return P(a).name.localeCompare(P(b).name);
+        });
+
+        const toggleSort = (key: string) => {
+            if (statsSortKey === key) {
+                setStatsSortAsc(!statsSortAsc);
+            } else {
+                setStatsSortKey(key);
+                setStatsSortAsc(false);
+            }
+        };
+
+        // Punti pull da mostrare nella mappa
+        const pullDots: FieldDot[] = [];
+        let totalPulls = 0;
+        let usPulls = 0;
+        let themPulls = 0;
+
+        for (const pt of st.points) {
+            const pl = pt.pull;
+            if (!pl || pl.x == null || pl.y == null) continue;
+            totalPulls++;
+            if (pl.team === 'us') usPulls++; else themPulls++;
+
+            const show =
+                statsFilter === 'all' ||
+                (statsFilter === 'us' && pl.team === 'us') ||
+                (statsFilter === 'them' && pl.team === 'them') ||
+                statsFilter === pl.p;
+
+            if (show) {
+                pullDots.push({
+                    x: pl.x,
+                    y: pl.y,
+                    c: pl.team === 'us' ? '#003057' : '#E07A1F',
+                    r: 1.2,
+                    label: pl.p ? P(pl.p).name.slice(0, 3).toUpperCase() : undefined
+                });
+            }
+        }
+
+        // Punti e Traiettorie Turnover & Difese da mostrare nella mappa
+        const toDots: FieldDot[] = [];
+        const toTrajectories: FieldTrajectory[] = [];
+        let toUsCount = 0;
+        let toThemCount = 0;
+        let oPointCount = 0;
+        let dPointCount = 0;
+
+        for (const pt of st.points) {
+            for (const e of pt.ev) {
+                if (!e || e.x == null || e.y == null) continue;
+                const isToUs = e.k === 'tt' || e.k === 'td' || e.k === 'ts' || e.k === 'tx';
+                const isToThem = e.k === 'err' || e.k === 'd' || e.k === 'call';
+                if (!isToUs && !isToThem) continue;
+
+                if (isToUs) toUsCount++;
+                else if (isToThem) toThemCount++;
+
+                if (pt.o) oPointCount++;
+                else dPointCount++;
+
+                let matchType = false;
+                if (toStatsFilter === 'all') matchType = true;
+                else if (toStatsFilter === 'toUs') matchType = isToUs;
+                else if (toStatsFilter === 'toThem') matchType = isToThem;
+
+                let matchOrigin = false;
+                if (toOriginFilter === 'all') matchOrigin = true;
+                else if (toOriginFilter === 'O') matchOrigin = !!pt.o;
+                else if (toOriginFilter === 'D') matchOrigin = !pt.o;
+
+                if (matchType && matchOrigin) {
+                    const color = isToThem ? '#E07A1F' : (pt.o ? '#C8323C' : '#1F6FD1');
+                    let shortCode = 'TO';
+                    if (e.k === 'tt') shortCode = 'LAN';
+                    else if (e.k === 'td') shortCode = 'PRE';
+                    else if (e.k === 'ts') shortCode = 'STL';
+                    else if (e.k === 'tx') shortCode = 'TO';
+                    else if (e.k === 'd') shortCode = 'D';
+                    else if (e.k === 'call') shortCode = 'CAL';
+                    else if (e.k === 'err') shortCode = 'ERR';
+
+                    const pName = e.p ? P(e.p).name.slice(0, 3).toUpperCase() : undefined;
+                    toDots.push({
+                        x: e.x,
+                        y: e.y,
+                        c: color,
+                        r: 1.2,
+                        label: pName ? pName : shortCode
+                    });
+
+                    if (e.trajectory && e.trajectory.length >= 2) {
+                        toTrajectories.push({
+                            points: e.trajectory,
+                            color,
+                            label: pName
+                        });
+                    }
+                }
+            }
+        }
+        const totalLocEvents = toUsCount + toThemCount;
+
+        const holdPct = tStats.oPts > 0 ? Math.round((tStats.holds / tStats.oPts) * 100) : 0;
+        const breakPct = tStats.dPts > 0 ? Math.round((tStats.breaks / tStats.dPts) * 100) : 0;
+
+        return (
+            <ScrollView style={styles.statsScroll} contentContainerStyle={styles.statsScrollContent}>
+                {/* KPI Squadra */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Statistiche Squadra</Text>
+                    <View style={styles.kpiGrid}>
+                        <View style={[styles.kpiItem, isMobile ? styles.kpiItemMobile : styles.kpiItemDesktop, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                            <Text style={[styles.kpiVal, { color: theme.colors.text }]}>{tStats.holds}/{tStats.oPts} <Text style={{ fontSize: 11, color: '#2E8540' }}>({holdPct}%)</Text></Text>
+                            <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>Hold (O vinti)</Text>
+                        </View>
+                        <View style={[styles.kpiItem, isMobile ? styles.kpiItemMobile : styles.kpiItemDesktop, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                            <Text style={[styles.kpiVal, { color: theme.colors.text }]}>{tStats.clean}</Text>
+                            <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>Hold puliti (0 TO)</Text>
+                        </View>
+                        <View style={[styles.kpiItem, isMobile ? styles.kpiItemMobile : styles.kpiItemDesktop, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                            <Text style={[styles.kpiVal, { color: theme.colors.text }]}>{tStats.breaks}/{tStats.dPts} <Text style={{ fontSize: 11, color: '#1F6FD1' }}>({breakPct}%)</Text></Text>
+                            <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>Break (D vinti)</Text>
+                        </View>
+                        <View style={[styles.kpiItem, isMobile ? styles.kpiItemMobile : styles.kpiItemDesktop, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                            <Text style={[styles.kpiVal, { color: theme.colors.text }]}>{tStats.breaks}/{tStats.breakChances}</Text>
+                            <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>Break / Occasioni</Text>
+                        </View>
+                        <View style={[styles.kpiItem, isMobile ? styles.kpiItemMobile : styles.kpiItemDesktop, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                            <Text style={[styles.kpiVal, { color: theme.colors.text }]}>{tStats.toUs}</Text>
+                            <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>TO Nostri</Text>
+                        </View>
+                        <View style={[styles.kpiItem, isMobile ? styles.kpiItemMobile : styles.kpiItemDesktop, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                            <Text style={[styles.kpiVal, { color: theme.colors.text }]}>{tStats.toThem}</Text>
+                            <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>TO Loro (D + err)</Text>
+                        </View>
+                        <View style={[styles.kpiItem, isMobile ? styles.kpiItemMobile : styles.kpiItemDesktop, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                            <Text style={[styles.kpiVal, { color: theme.colors.text }]}>
+                                {tStats.durN ? Math.round(tStats.durSum / tStats.durN) + 's' : '–'}
+                            </Text>
+                            <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>Durata media punto</Text>
+                        </View>
+                    </View>
+                </View>
+
+                {/* Tabella Giocatori */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 0 }]}>Statistiche Giocatori</Text>
+                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Scorri e tocca le colonne ➔</Text>
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                        <View>
+                            <View style={[styles.tableHeaderRow, { backgroundColor: theme.dark ? '#1E293B' : '#EEF1F4' }]}>
+                                <TouchableOpacity onPress={() => toggleSort('pts')}>
+                                    <Text style={[styles.thCell, { width: 115, textAlign: 'left', paddingLeft: 6 }]}>Giocatore</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('pts')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'pts' ? (theme.dark ? '#60A5FA' : '#003057') : undefined }]}>
+                                        PT{statsSortKey === 'pts' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('ptsO')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'ptsO' ? (theme.dark ? '#60A5FA' : '#003057') : undefined }]}>
+                                        O{statsSortKey === 'ptsO' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('ptsD')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'ptsD' ? (theme.dark ? '#60A5FA' : '#003057') : undefined }]}>
+                                        D{statsSortKey === 'ptsD' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('goals')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'goals' ? '#2E8540' : undefined }]}>
+                                        M{statsSortKey === 'goals' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('ast')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'ast' ? '#1F6FD1' : undefined }]}>
+                                        A{statsSortKey === 'ast' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('ds')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'ds' ? (theme.dark ? '#60A5FA' : '#003057') : undefined }]}>
+                                        D{statsSortKey === 'ds' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('toTot')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'toTot' ? '#C8323C' : undefined }]}>
+                                        TO{statsSortKey === 'toTot' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('touches')}>
+                                    <Text style={[styles.thCell, { width: 44, color: statsSortKey === 'touches' ? '#E07A1F' : undefined }]}>
+                                        TCH{statsSortKey === 'touches' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => toggleSort('plusMinus')}>
+                                    <Text style={[styles.thCell, { width: 48, fontWeight: 'bold', color: statsSortKey === 'plusMinus' ? (theme.dark ? '#60A5FA' : '#003057') : undefined }]}>
+                                        +/-{statsSortKey === 'plusMinus' ? (statsSortAsc ? ' ▲' : ' ▼') : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            {ids.map(id => {
+                                const s = pStats[id];
+                                return (
+                                    <View key={id} style={[styles.tableRow, { borderBottomColor: theme.colors.border }]}>
+                                        <Text style={[styles.tdCell, { width: 115, fontWeight: '600', color: theme.colors.text, textAlign: 'left', paddingLeft: 6 }]} numberOfLines={1}>
+                                            {P(id).name} <Text style={{ color: P(id).g === 'F' ? '#B8338A' : '#1F6FD1', fontSize: 10 }}>({P(id).g})</Text>
+                                        </Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: theme.colors.text }]}>{s.pts}</Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: theme.colors.text }]}>{s.ptsO}</Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: theme.colors.text }]}>{s.ptsD}</Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: '#2E8540', fontWeight: 'bold' }]}>{s.goals}</Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: '#1F6FD1' }]}>{s.ast}</Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: theme.dark ? '#60A5FA' : '#003057', fontWeight: 'bold' }]}>{s.ds}</Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: '#C8323C' }]}>{s.toTot}</Text>
+                                        <Text style={[styles.tdCell, { width: 44, color: theme.colors.text }]}>{s.touches || 0}</Text>
+                                        <Text style={[styles.tdCell, { width: 48, fontWeight: 'bold', color: s.plusMinus >= 0 ? '#2E8540' : '#C8323C' }]}>
+                                            {s.plusMinus > 0 ? `+${s.plusMinus}` : s.plusMinus}
+                                        </Text>
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    </ScrollView>
+                </View>
+
+                {/* Mappa Pull Ingrandita */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                            <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 2 }]}>Mappa Pull</Text>
+                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
+                                Totale: {totalPulls} ({usPulls} nostri · {themPulls} avversari)
+                            </Text>
+                        </View>
+                    </View>
+
+                    {/* Filtri e Legenda */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 10, flexWrap: 'wrap', gap: 8 }}>
+                        <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                            {[
+                                { key: 'all', label: `Tutti (${totalPulls})` },
+                                { key: 'us', label: `Nostri (${usPulls})` },
+                                { key: 'them', label: `Loro (${themPulls})` }
+                            ].map(f => (
+                                <TouchableOpacity
+                                    key={f.key}
+                                    style={[
+                                        styles.filterChip,
+                                        statsFilter === f.key
+                                            ? styles.filterChipOn
+                                            : {
+                                                backgroundColor: theme.dark ? '#1E293B' : '#F1F5F9',
+                                                borderColor: theme.dark ? '#334155' : '#CBD5E1'
+                                            }
+                                    ]}
+                                    onPress={() => setStatsFilter(f.key)}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.filterChipText,
+                                            statsFilter === f.key
+                                                ? styles.filterChipTextOn
+                                                : { color: theme.colors.text }
+                                        ]}
+                                    >
+                                        {f.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#003057' }} />
+                                <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.textSecondary }}>Nostri</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#E07A1F' }} />
+                                <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.textSecondary }}>Loro</Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    <InteractiveField
+                        dots={pullDots}
+                        interactive={false}
+                        isPlayMode={false}
+                        flip={toFieldFlip}
+                    />
+                </View>
+
+                {/* Mappa Turnover & Difese */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                            <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 2 }]}>
+                                Mappa Turnover & Difese
+                            </Text>
+                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
+                                Totale: {totalLocEvents} ({toUsCount} TO nostri · {toThemCount} TO avversari)
+                            </Text>
+                        </View>
+                    </View>
+
+                    {/* Filtri e Legenda */}
+                    <View style={{ marginTop: 10, marginBottom: 8, gap: 8 }}>
+                        {/* Filtro Mete / Punti (Attacco vs Difesa) */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary }}>Mete:</Text>
+                            {[
+                                { key: 'all', label: `Tutte (${totalLocEvents})` },
+                                { key: 'O', label: `⚡ Attacco (${oPointCount})` },
+                                { key: 'D', label: `🛡️ Difesa (${dPointCount})` }
+                            ].map(f => (
+                                <TouchableOpacity
+                                    key={f.key}
+                                    style={[
+                                        styles.filterChip,
+                                        toOriginFilter === f.key
+                                            ? {
+                                                backgroundColor: f.key === 'O' ? '#C8323C' : f.key === 'D' ? '#1F6FD1' : '#003057',
+                                                borderColor: f.key === 'O' ? '#A8252F' : f.key === 'D' ? '#1756A4' : '#003057'
+                                            }
+                                            : {
+                                                backgroundColor: theme.dark ? '#1E293B' : '#F1F5F9',
+                                                borderColor: theme.dark ? '#334155' : '#CBD5E1'
+                                            }
+                                    ]}
+                                    onPress={() => setToOriginFilter(f.key as any)}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.filterChipText,
+                                            {
+                                                color: toOriginFilter === f.key ? '#fff' : theme.colors.text,
+                                                fontWeight: toOriginFilter === f.key ? 'bold' : '600'
+                                            }
+                                        ]}
+                                    >
+                                        {f.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        {/* Filtro Tipo Evento e Legenda */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                                {[
+                                    { key: 'all', label: `Tutti` },
+                                    { key: 'toUs', label: `TO Nostri (${toUsCount})` },
+                                    { key: 'toThem', label: `TO Loro (${toThemCount})` }
+                                ].map(f => (
+                                    <TouchableOpacity
+                                        key={f.key}
+                                        style={[
+                                            styles.filterChip,
+                                            toStatsFilter === f.key
+                                                ? styles.filterChipOn
+                                                : {
+                                                    backgroundColor: theme.dark ? '#1E293B' : '#F1F5F9',
+                                                    borderColor: theme.dark ? '#334155' : '#CBD5E1'
+                                                }
+                                        ]}
+                                        onPress={() => setToStatsFilter(f.key as any)}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.filterChipText,
+                                                toStatsFilter === f.key
+                                                    ? styles.filterChipTextOn
+                                                    : { color: theme.colors.text }
+                                            ]}
+                                        >
+                                            {f.label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#C8323C' }} />
+                                    <Text style={{ fontSize: 10, fontWeight: '600', color: theme.colors.textSecondary }}>Nostri (O)</Text>
+                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#1F6FD1' }} />
+                                    <Text style={{ fontSize: 10, fontWeight: '600', color: theme.colors.textSecondary }}>Nostri (D)</Text>
+                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                    <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#E07A1F' }} />
+                                    <Text style={{ fontSize: 10, fontWeight: '600', color: theme.colors.textSecondary }}>Avversari</Text>
+                                </View>
+                            </View>
+                        </View>
+                    </View>
+
+                    <InteractiveField
+                        dots={toDots}
+                        trajectories={toTrajectories}
+                        interactive={false}
+                        isPlayMode={true}
+                        flip={toFieldFlip}
+                        onFlipDirection={() => setToFieldFlip(prev => !prev)}
+                    />
+                </View>
+
+                {/* Log Cronologico Eventi */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Cronologia Eventi ({match.events?.length || 0})</Text>
+                    <ScrollView style={{ maxHeight: 240 }}>
+                        {(match.events || []).slice().reverse().map((e, idx) => (
+                            <View key={idx} style={styles.logItem}>
+                                <Text style={[styles.logText, { color: theme.colors.text }]}>
+                                    • {describeEvent(e, playerMap)}{e.x != null && e.y != null ? ` [${e.x}m, ${e.y}m]` : ''}
+                                </Text>
+                            </View>
+                        ))}
+                    </ScrollView>
+                </View>
+            </ScrollView>
+        );
+    };
+
+    /* ----------------------------------------------------
+       RENDER PARTITA CONCLUSA (Azioni di gioco disabilitate)
+    ---------------------------------------------------- */
+    const renderCompletedMatchView = () => {
+        const isWin = st.score.us > st.score.them;
+        const isTie = st.score.us === st.score.them;
+        const resultLabel = isTie ? 'PAREGGIO' : isWin ? 'VITTORIA 🎉' : 'SCONFITTA';
+        const resultBg = isTie ? '#78909C' : isWin ? '#2E8540' : '#E65100';
+
+        return (
+            <View style={{ padding: 16, gap: 14 }}>
+                {/* Card Risultato Finale */}
+                <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border, alignItems: 'center', paddingVertical: 20 }]}>
+                    <View style={{ backgroundColor: resultBg, paddingHorizontal: 14, paddingVertical: 4, borderRadius: 20, marginBottom: 10 }}>
+                        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 13, letterSpacing: 0.5 }}>
+                            {resultLabel}
+                        </Text>
+                    </View>
+
+                    <Text style={{ fontSize: 13, color: theme.colors.textSecondary, marginBottom: 4 }}>
+                        RISULTATO FINALE
+                    </Text>
+                    <Text style={{ fontSize: 32, fontWeight: '900', color: theme.colors.text }}>
+                        BUBBA {st.score.us} – {st.score.them} {match.opponent.toUpperCase()}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, marginTop: 4 }}>
+                        {st.points.length} punti disputati · {match.events?.length || 0} azioni registrate
+                    </Text>
+
+                    {/* KPI Rapidi Partita */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginTop: 18, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 14 }}>
+                        <View style={{ alignItems: 'center' }}>
+                            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#2E8540' }}>{tStats.holds}</Text>
+                            <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Hold</Text>
+                        </View>
+                        <View style={{ alignItems: 'center' }}>
+                            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#003057' }}>{tStats.breaks}</Text>
+                            <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Break</Text>
+                        </View>
+                        <View style={{ alignItems: 'center' }}>
+                            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#C8323C' }}>{tStats.toUs}</Text>
+                            <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>TO Nostri</Text>
+                        </View>
+                        <View style={{ alignItems: 'center' }}>
+                            <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.colors.primary }}>{tStats.toThem}</Text>
+                            <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>TO Loro</Text>
+                        </View>
+                    </View>
+                </View>
+
+                {/* Banner Azioni Bloccate */}
+                <View style={[styles.lockedBanner, { backgroundColor: '#ECEFF1', borderColor: '#B0BEC5', marginHorizontal: 0, marginTop: 0 }]}>
+                    <Text style={styles.lockedTitle}>🔒 REGISTRAZIONE EVENTI BLOCCATA</Text>
+                    <Text style={styles.lockedSub}>
+                        La partita è chiusa. La selezione della linea e l'avvio di ulteriori punti sono disabilitati.
+                    </Text>
+                    {isStaff && (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                            <TouchableOpacity
+                                style={{
+                                    backgroundColor: '#003057',
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 7,
+                                    borderRadius: 6
+                                }}
+                                onPress={() => setModalRosterVisible(true)}
+                            >
+                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
+                                    👥 Convocati & Roster
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={{
+                                    backgroundColor: '#5B6570',
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 7,
+                                    borderRadius: 6
+                                }}
+                                onPress={handleToggleDone}
+                            >
+                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
+                                    🔓 Riapri Partita
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                </View>
+
+                {/* Pulsante rapido statistiche */}
+                <TouchableOpacity
+                    style={{
+                        backgroundColor: theme.colors.primary,
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginTop: 4
+                    }}
+                    onPress={() => setActiveTab('stats')}
+                >
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold' }}>
+                        📊 Consulta Statistiche e Tabella Giocatori ➔
+                    </Text>
+                </TouchableOpacity>
+            </View>
+        );
+    };
+
+    return (
+        <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+            {/* Header Superiore con Punteggio e Azioni */}
+            <View style={[styles.matchHeader, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border }]}>
+                <ScreenTitle
+                    title={`vs ${match.opponent}`}
+                    onBack={() => navigation.goBack()}
+                    containerStyle={{ marginBottom: 4 }}
+                />
+
+                <View style={styles.headerActionsRow}>
+                    <TouchableOpacity
+                        style={[styles.headerBtn, { backgroundColor: '#2E8540' }, isMobile && styles.headerBtnMobile]}
+                        onPress={handleExportExcel}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]}>📊 Excel</Text>
+                    </TouchableOpacity>
+
+                    {isStaff && (
+                        <>
+                            <TouchableOpacity
+                                style={[styles.headerBtn, { backgroundColor: '#E07A1F' }, isMobile && styles.headerBtnMobile]}
+                                onPress={() => setModalTouchesVisible(true)}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]} numberOfLines={1}>
+                                    🥏 Tocchi
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.headerBtn, { backgroundColor: '#003057' }, isMobile && styles.headerBtnMobile]}
+                                onPress={() => setModalRosterVisible(true)}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]} numberOfLines={1}>
+                                    👥 Roster ({matchRoster.length})
+                                </Text>
+                            </TouchableOpacity>
+
+                            {canEdit && (
+                                <TouchableOpacity
+                                    style={[styles.headerBtn, { backgroundColor: '#5B6570' }, isMobile && styles.headerBtnMobile]}
+                                    onPress={handleUndo}
+                                    activeOpacity={0.8}
+                                >
+                                    <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]}>↩ Annulla</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            <TouchableOpacity
+                                style={[styles.headerBtn, { backgroundColor: isCompleted ? '#003057' : '#C8323C' }, isMobile && styles.headerBtnMobile]}
+                                onPress={handleToggleDone}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]}>
+                                    {isCompleted ? '🔓 Riapri' : '🏁 Termina'}
+                                </Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
+                </View>
+
+                {/* Punteggio Gigante */}
+                <View style={styles.scoreRow}>
+                    <View style={styles.teamScore}>
+                        <Text style={[styles.teamName, { color: theme.colors.text }]} numberOfLines={1}>BUBBA</Text>
+                        <Text style={[styles.scoreValue, { color: '#003057' }]}>{st.score.us}</Text>
+                    </View>
+                    <Text style={[styles.scoreDivider, { color: theme.colors.textSecondary }]}>–</Text>
+                    <View style={styles.teamScore}>
+                        <Text style={[styles.teamName, { color: theme.colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+                            {match.opponent.toUpperCase()}
+                        </Text>
+                        <Text style={[styles.scoreValue, { color: '#E07A1F' }]}>{st.score.them}</Text>
+                    </View>
+                </View>
+
+                {/* Tab Navigator */}
+                <View style={styles.tabBar}>
+                    <TouchableOpacity
+                        style={[styles.tabItem, activeTab === 'play' && styles.tabItemOn]}
+                        onPress={() => setActiveTab('play')}
+                    >
+                        <Text style={[styles.tabText, activeTab === 'play' && styles.tabTextOn]}>
+                            {isCompleted ? 'PARTITA (CONCLUSA)' : 'PARTITA (LIVE)'}
+                        </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.tabItem, activeTab === 'stats' && styles.tabItemOn]}
+                        onPress={() => setActiveTab('stats')}
+                    >
+                        <Text style={[styles.tabText, activeTab === 'stats' && styles.tabTextOn]}>STATISTICHE</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            {/* Contenuto Schermata in base al tab */}
+            {activeTab === 'play' ? (
+                <ScrollView contentContainerStyle={{ padding: isMobile ? 12 : 16, paddingBottom: 48, gap: 16 }}>
+                    {isCompleted ? (
+                        renderCompletedMatchView()
+                    ) : (
+                        <>
+                            {st.phase === 'line' && renderPhaseLine()}
+                            {st.phase === 'pull' && renderPhasePull()}
+                            {st.phase === 'play' && renderPhasePlay()}
+                        </>
+                    )}
+                </ScrollView>
+            ) : (
+                renderStatsTab()
+            )}
+
+            {/* Modal Cambio Linea durante il punto */}
+            {/* Modal Cambio Linea durante il punto */}
+            {!isCompleted && curPt && (
+                <Modal visible={modalLineVisible} transparent animationType="slide">
+                    <View style={styles.modalBg}>
+                        <View style={[styles.modalBox, { backgroundColor: theme.colors.card, maxWidth: 540 }]}>
+                            {subStep === 'roster' ? (
+                                <>
+                                    <View style={styles.rowBetween}>
+                                        <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 0 }]}>
+                                            Cambio Giocatori in Campo
+                                        </Text>
+                                        <View style={[
+                                            { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+                                            { backgroundColor: lineSel.length === 5 ? '#E2F0D9' : '#FCE8E6' }
+                                        ]}>
+                                            <Text style={{ fontSize: 11, fontWeight: '700', color: lineSel.length === 5 ? '#2E7D32' : '#C8323C' }}>
+                                                {lineSel.length} / 5
+                                            </Text>
+                                        </View>
+                                    </View>
+                                    <Text style={[styles.muted, { color: theme.colors.textSecondary, marginVertical: 8 }]}>
+                                        Seleziona i 5 giocatori che devono risultare in campo per questo punto.
+                                    </Text>
+
+                                    <View style={styles.playerGrid}>
+                                        {matchRoster.map(p => {
+                                            const isSel = lineSel.includes(p.id);
+                                            return (
+                                                <TouchableOpacity
+                                                    key={p.id}
+                                                    style={[
+                                                        styles.pbtn,
+                                                        isSel && styles.pbtnSel,
+                                                        { backgroundColor: isSel ? '#E3ECF5' : theme.colors.card, borderColor: isSel ? '#003057' : theme.colors.border }
+                                                    ]}
+                                                    onPress={() => {
+                                                        setLineSel(prev => (prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]));
+                                                    }}
+                                                >
+                                                    <Text style={[styles.pbtnName, { color: theme.colors.text }]}>{p.name}</Text>
+                                                    <View style={[styles.genderBadge, { backgroundColor: p.g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
+                                                        <Text style={styles.genderText}>{p.g}</Text>
+                                                    </View>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+
+                                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+                                        <TouchableOpacity
+                                            style={[styles.segBtn, { paddingHorizontal: 16 }]}
+                                            onPress={() => setModalLineVisible(false)}
+                                        >
+                                            <Text style={styles.segText}>Annulla</Text>
+                                        </TouchableOpacity>
+                                        {(() => {
+                                            const outCount = (curPt?.line || []).filter(id => !lineSel.includes(id)).length;
+                                            const inCount = lineSel.filter(id => !(curPt?.line || []).includes(id)).length;
+                                            const hasChanges = outCount > 0 || inCount > 0;
+                                            return (
+                                                <TouchableOpacity
+                                                    style={[
+                                                        styles.startPtBtn,
+                                                        { paddingHorizontal: 20, opacity: lineSel.length === 5 ? 1 : 0.4 }
+                                                    ]}
+                                                    disabled={lineSel.length !== 5}
+                                                    onPress={() => {
+                                                        if (!hasChanges) {
+                                                            setModalLineVisible(false);
+                                                            return;
+                                                        }
+                                                        setSubStep('reason');
+                                                    }}
+                                                >
+                                                    <Text style={styles.startPtText}>
+                                                        {hasChanges ? 'Avanti: Motivo Cambio ▸' : 'Nessuna Modifica'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })()}
+                                    </View>
+                                </>
+                            ) : (
+                                <>
+                                    <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 4 }]}>
+                                        Motivo della Sostituzione
+                                    </Text>
+                                    <Text style={[styles.muted, { color: theme.colors.textSecondary, marginBottom: 14 }]}>
+                                        Specifica quando ha effetto questo cambio giocatore:
+                                    </Text>
+
+                                    {/* Riepilogo modifiche */}
+                                    {(() => {
+                                        const outPlayers = (curPt?.line || []).filter(id => !lineSel.includes(id));
+                                        const inPlayers = lineSel.filter(id => !(curPt?.line || []).includes(id));
+                                        return (
+                                            <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 10, marginBottom: 14, borderWidth: 1, borderColor: '#E2E8F0', gap: 4 }}>
+                                                {outPlayers.length > 0 && (
+                                                    <Text style={{ fontSize: 12, color: '#C8323C', fontWeight: '600' }}>
+                                                        🔻 Esce: {outPlayers.map(id => P(id).name).join(', ')}
+                                                    </Text>
+                                                )}
+                                                {inPlayers.length > 0 && (
+                                                    <Text style={{ fontSize: 12, color: '#166534', fontWeight: '600' }}>
+                                                        🔺 Entra: {inPlayers.map(id => P(id).name).join(', ')}
+                                                    </Text>
+                                                )}
+                                            </View>
+                                        );
+                                    })()}
+
+                                    {/* Scelta: Infortunio (da questo momento) */}
+                                    <TouchableOpacity
+                                        activeOpacity={0.8}
+                                        style={[
+                                            styles.subReasonCard,
+                                            subReason === 'injury'
+                                                ? { borderColor: '#003057', backgroundColor: '#F0F7FF' }
+                                                : { borderColor: theme.colors.border, backgroundColor: theme.colors.card }
+                                        ]}
+                                        onPress={() => setSubReason('injury')}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                            <Text style={{ fontSize: 20 }}>🚑</Text>
+                                            <Text style={[styles.subReasonTitle, { color: '#003057' }]}>
+                                                Da questo momento (per Infortunio)
+                                            </Text>
+                                        </View>
+                                        <Text style={[styles.subReasonDesc, { color: theme.colors.textSecondary }]}>
+                                            Sostituzione avvenuta durante l'azione. Il giocatore sostituito mantiene il punto disputato fino a questo momento e il subentrante giocherà da adesso in poi.
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    {/* Scelta: Errore (da inizio meta) */}
+                                    <TouchableOpacity
+                                        activeOpacity={0.8}
+                                        style={[
+                                            styles.subReasonCard,
+                                            subReason === 'error'
+                                                ? { borderColor: '#003057', backgroundColor: '#F0F7FF' }
+                                                : { borderColor: theme.colors.border, backgroundColor: theme.colors.card }
+                                        ]}
+                                        onPress={() => setSubReason('error')}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                            <Text style={{ fontSize: 20 }}>✏️</Text>
+                                            <Text style={[styles.subReasonTitle, { color: '#003057' }]}>
+                                                Da inizio meta (per Errore)
+                                            </Text>
+                                        </View>
+                                        <Text style={[styles.subReasonDesc, { color: theme.colors.textSecondary }]}>
+                                            Correzione della formazione iniziale del punto. Chi era stato segnato per sbaglio viene rimosso dal punto e sostituito retroattivamente fin dall'inizio.
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+                                        <TouchableOpacity
+                                            style={[styles.segBtn, { paddingHorizontal: 14 }]}
+                                            onPress={() => setSubStep('roster')}
+                                        >
+                                            <Text style={styles.segText}>◂ Modifica Roster</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.startPtBtn, { paddingHorizontal: 20 }]}
+                                            onPress={() => applyLineChange(subReason)}
+                                        >
+                                            <Text style={styles.startPtText}>Conferma Sostituzione</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </>
+                            )}
+                        </View>
+                    </View>
+                </Modal>
+            )}
+
+            {/* Modal Gestione Convocati Partita & Collegamento Giocatori */}
+            <Modal visible={modalRosterVisible} transparent animationType="slide" onRequestClose={() => {
+                if (remappingPlayer) setRemappingPlayer(null);
+                else setModalRosterVisible(false);
+            }}>
+                <View style={styles.modalBg}>
+                    <View style={[styles.modalBox, { backgroundColor: theme.colors.card, maxHeight: '90%' }]}>
+                        {remappingPlayer ? (
+                            /* Sub-view: Collegamento a Membro Bubba */
+                            <View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                                    <Text style={[styles.cardTitle, { color: theme.colors.text, fontSize: 16 }]}>
+                                        🔗 Collega a Membro Bubba
+                                    </Text>
+                                    <TouchableOpacity
+                                        style={{ padding: 4 }}
+                                        onPress={() => {
+                                            setRemappingPlayer(null);
+                                            setMemberSearchQuery('');
+                                        }}
+                                    >
+                                        <Text style={{ fontSize: 13, color: theme.colors.primary, fontWeight: 'bold' }}>Annulla</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={{ backgroundColor: '#FFF3E0', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#FFE0B2', marginBottom: 10 }}>
+                                    <Text style={{ fontSize: 12, color: '#E65100', fontWeight: 'bold' }}>
+                                        Stai collegando: {remappingPlayer.name} ({remappingPlayer.g})
+                                    </Text>
+                                    <Text style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                                        Seleziona a quale membro ufficiale assegnare tutti gli eventi registrati (gol, assist, difese, presenze in linea).
+                                    </Text>
+                                </View>
+
+                                <TextInput
+                                    style={{
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.border,
+                                        borderRadius: 8,
+                                        paddingHorizontal: 10,
+                                        paddingVertical: 7,
+                                        fontSize: 13,
+                                        color: theme.colors.text,
+                                        marginBottom: 8
+                                    }}
+                                    placeholder="Cerca membro per nome o soprannome..."
+                                    placeholderTextColor={theme.colors.textSecondary}
+                                    value={memberSearchQuery}
+                                    onChangeText={setMemberSearchQuery}
+                                />
+
+                                <ScrollView style={{ maxHeight: 320 }} nestedScrollEnabled>
+                                    <View style={{ gap: 6 }}>
+                                        {filteredMembersToRemap.length === 0 ? (
+                                            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, padding: 8, textAlign: 'center' }}>
+                                                Nessun membro trovato con questa ricerca.
+                                            </Text>
+                                        ) : (
+                                            filteredMembersToRemap.map(m => {
+                                                const mGender: 'M' | 'F' = m.gender === 'F' ? 'F' : 'M';
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={m.id}
+                                                        style={{
+                                                            flexDirection: 'row',
+                                                            alignItems: 'center',
+                                                            paddingVertical: 9,
+                                                            paddingHorizontal: 12,
+                                                            borderRadius: 8,
+                                                            borderWidth: 1,
+                                                            borderColor: theme.colors.border,
+                                                            backgroundColor: 'rgba(0,0,0,0.02)'
+                                                        }}
+                                                        onPress={() => {
+                                                            const mName = m.nickname || m.firstName;
+                                                            showConfirmation(
+                                                                'Collega Giocatore',
+                                                                `Vuoi collegare "${remappingPlayer.name}" a "${mName}"? Tutti gli eventi e le statistiche storiche verranno aggiornati.`,
+                                                                () => handleRemapPlayer(remappingPlayer, m),
+                                                                'Collega'
+                                                            );
+                                                        }}
+                                                    >
+                                                        <Text style={{ fontSize: 13, fontWeight: 'bold', color: mGender === 'F' ? '#B8338A' : '#1F6FD1', width: 22 }}>
+                                                            {mGender}
+                                                        </Text>
+                                                        <View style={{ flex: 1 }}>
+                                                            <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.text }}>
+                                                                {m.nickname || m.firstName} {m.lastName || ''}
+                                                            </Text>
+                                                            {m.nickname && m.firstName && (
+                                                                <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>
+                                                                    {m.firstName} {m.lastName}
+                                                                </Text>
+                                                            )}
+                                                        </View>
+                                                        <View style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 }}>
+                                                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>Collega ➔</Text>
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                );
+                                            })
+                                        )}
+                                    </View>
+                                </ScrollView>
+                            </View>
+                        ) : (
+                            /* Vista Principale: Gestione Roster Convocati */
+                            <ScrollView showsVerticalScrollIndicator={false}>
+                                <Text style={[styles.cardTitle, { color: theme.colors.text }]}>
+                                    Gestione Convocati Partita ({matchRoster.length})
+                                </Text>
+                                <Text style={[styles.muted, { color: theme.colors.textSecondary, marginBottom: 8 }]}>
+                                    Modifica i convocati della partita e collega giocatori importati o ospiti ai membri Bubba.
+                                </Text>
+
+                                {/* Lista Convocati Attuali con Azioni */}
+                                <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.colors.text, marginTop: 4, marginBottom: 6 }}>
+                                    Convocati in questa Partita:
+                                </Text>
+                                <View style={{ maxHeight: 200, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 6, backgroundColor: 'rgba(0,0,0,0.02)' }}>
+                                    <ScrollView nestedScrollEnabled>
+                                        <View style={{ gap: 6 }}>
+                                            {matchRoster.map(p => {
+                                                const isGuestOrImported = p.id.startsWith('guest_') || p.id.startsWith('imported_') || (p as any).isGuest;
+                                                return (
+                                                    <View
+                                                        key={p.id}
+                                                        style={{
+                                                            flexDirection: 'row',
+                                                            alignItems: 'center',
+                                                            paddingVertical: 6,
+                                                            paddingHorizontal: 8,
+                                                            borderRadius: 6,
+                                                            backgroundColor: theme.colors.card,
+                                                            borderWidth: 1,
+                                                            borderColor: theme.colors.border
+                                                        }}
+                                                    >
+                                                        <TouchableOpacity
+                                                            disabled={!isGuestOrImported}
+                                                            onPress={async () => {
+                                                                if (!isGuestOrImported) return;
+                                                                const current = match.customRoster && match.customRoster.length > 0
+                                                                    ? [...match.customRoster]
+                                                                    : matchRoster.map(x => ({ id: x.id, name: x.name, g: x.g }));
+                                                                const nextG: 'M' | 'F' = p.g === 'F' ? 'M' : 'F';
+                                                                const updated = current.map(x => x.id === p.id ? { ...x, g: nextG } : x);
+                                                                await updateMatchAnalysis({ id: match.id, customRoster: updated });
+                                                            }}
+                                                            style={{
+                                                                paddingHorizontal: 5,
+                                                                paddingVertical: 2,
+                                                                borderRadius: 4,
+                                                                backgroundColor: isGuestOrImported ? (p.g === 'F' ? '#FCE4EC' : '#E3F2FD') : 'transparent',
+                                                                marginRight: 6
+                                                            }}
+                                                        >
+                                                            <Text style={{ fontSize: 13, fontWeight: 'bold', color: p.g === 'F' ? '#B8338A' : '#1F6FD1' }}>
+                                                                {p.g}{isGuestOrImported ? ' ⇄' : ''}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                        <View style={{ flex: 1 }}>
+                                                            <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text }}>
+                                                                {p.name}
+                                                            </Text>
+                                                        </View>
+                                                        <View
+                                                            style={{
+                                                                paddingHorizontal: 6,
+                                                                paddingVertical: 2,
+                                                                borderRadius: 4,
+                                                                marginRight: 6,
+                                                                backgroundColor: isGuestOrImported ? '#FFF3E0' : '#E3F2FD'
+                                                            }}
+                                                        >
+                                                            <Text style={{ fontSize: 10, fontWeight: 'bold', color: isGuestOrImported ? '#E65100' : '#1565C0' }}>
+                                                                {isGuestOrImported ? 'Ospite/Imp.' : 'Membro'}
+                                                            </Text>
+                                                        </View>
+                                                        <TouchableOpacity
+                                                            style={{
+                                                                paddingHorizontal: 8,
+                                                                paddingVertical: 4,
+                                                                borderRadius: 5,
+                                                                backgroundColor: theme.colors.primary + '18',
+                                                                marginRight: 4
+                                                            }}
+                                                            onPress={() => setRemappingPlayer(p)}
+                                                        >
+                                                            <Text style={{ fontSize: 11, color: theme.colors.primary, fontWeight: 'bold' }}>
+                                                                🔗 Collega
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity
+                                                            style={{
+                                                                paddingHorizontal: 6,
+                                                                paddingVertical: 4,
+                                                                borderRadius: 5,
+                                                                backgroundColor: '#FFEBEE'
+                                                            }}
+                                                            onPress={() => handleRemovePlayerFromRoster(p.id, p.name)}
+                                                        >
+                                                            <Text style={{ fontSize: 11, color: '#C8323C', fontWeight: 'bold' }}>✕</Text>
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                );
+                                            })}
+                                        </View>
+                                    </ScrollView>
+                                </View>
+
+                                {/* Aggiunta Ospite Esterno */}
+                                <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.colors.text, marginTop: 12, marginBottom: 4 }}>
+                                    Aggiungi Ospite al Volo:
+                                </Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, padding: 6, backgroundColor: 'rgba(0,0,0,0.03)', borderRadius: 8 }}>
+                                    <TextInput
+                                        style={{ flex: 1, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5, fontSize: 12, color: theme.colors.text }}
+                                        placeholder="Nome Ospite..."
+                                        placeholderTextColor={theme.colors.textSecondary}
+                                        value={newGuestName}
+                                        onChangeText={setNewGuestName}
+                                    />
+                                    <TouchableOpacity
+                                        style={{ paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, backgroundColor: newGuestGender === 'F' ? '#B8338A' : '#1F6FD1' }}
+                                        onPress={() => setNewGuestGender(prev => prev === 'F' ? 'M' : 'F')}
+                                    >
+                                        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>{newGuestGender}</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: theme.colors.primary }}
+                                        onPress={async () => {
+                                            if (!newGuestName.trim()) return;
+                                            const guestId = `guest_${Date.now()}`;
+                                            const current = match.customRoster && match.customRoster.length > 0
+                                                ? [...match.customRoster]
+                                                : matchRoster.map(p => ({ id: p.id, name: p.name, g: p.g }));
+                                            const updated = [...current, { id: guestId, name: newGuestName.trim(), g: newGuestGender, isGuest: true }];
+                                            await updateMatchAnalysis({ id: match.id, customRoster: updated });
+                                            setNewGuestName('');
+                                        }}
+                                    >
+                                        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 11 }}>+ Aggiungi</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {/* Aggiungi Membri Societari */}
+                                <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.colors.text, marginTop: 12, marginBottom: 4 }}>
+                                    Aggiungi / Rimuovi Membri Società:
+                                </Text>
+                                <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                                    <TouchableOpacity
+                                        style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, backgroundColor: '#B8338A' }}
+                                        onPress={async () => {
+                                            const females = allMembers.filter(m => m.gender === 'F').map(m => ({
+                                                id: m.id,
+                                                name: m.nickname || m.firstName,
+                                                g: 'F' as const
+                                            }));
+                                            const others = matchRoster.filter(p => p.g !== 'F');
+                                            await updateMatchAnalysis({ id: match.id, customRoster: [...others, ...females] });
+                                        }}
+                                    >
+                                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>+ Tutte le Donne</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, backgroundColor: '#1F6FD1' }}
+                                        onPress={async () => {
+                                            const males = allMembers.filter(m => m.gender !== 'F').map(m => ({
+                                                id: m.id,
+                                                name: m.nickname || m.firstName,
+                                                g: 'M' as const
+                                            }));
+                                            const others = matchRoster.filter(p => p.g === 'F');
+                                            await updateMatchAnalysis({ id: match.id, customRoster: [...others, ...males] });
+                                        }}
+                                    >
+                                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>+ Tutti gli Uomini</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <TextInput
+                                    style={{
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.border,
+                                        borderRadius: 6,
+                                        paddingHorizontal: 8,
+                                        paddingVertical: 5,
+                                        fontSize: 12,
+                                        color: theme.colors.text,
+                                        marginBottom: 6
+                                    }}
+                                    placeholder="Filtra membri per nome..."
+                                    placeholderTextColor={theme.colors.textSecondary}
+                                    value={allMemberSearchQuery}
+                                    onChangeText={setAllMemberSearchQuery}
+                                />
+
+                                <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled>
+                                    <View style={{ gap: 4 }}>
+                                        {filteredAllMembers.map(m => {
+                                            const mGender: 'M' | 'F' = m.gender === 'F' ? 'F' : 'M';
+                                            const isCalled = matchRoster.some(x => x.id === m.id);
+                                            return (
+                                                <TouchableOpacity
+                                                    key={m.id}
+                                                    style={{
+                                                        flexDirection: 'row',
+                                                        alignItems: 'center',
+                                                        paddingVertical: 6,
+                                                        paddingHorizontal: 8,
+                                                        borderRadius: 6,
+                                                        borderWidth: 1,
+                                                        borderColor: isCalled ? theme.colors.primary : theme.colors.border,
+                                                        backgroundColor: isCalled ? theme.colors.primary + '12' : 'transparent'
+                                                    }}
+                                                    onPress={async () => {
+                                                        const current = match.customRoster && match.customRoster.length > 0
+                                                            ? [...match.customRoster]
+                                                            : matchRoster.map(x => ({ id: x.id, name: x.name, g: x.g }));
+                                                        const exists = current.some(x => x.id === m.id);
+                                                        const updated = exists
+                                                            ? current.filter(x => x.id !== m.id)
+                                                            : [...current, { id: m.id, name: m.nickname || m.firstName, g: mGender }];
+                                                        await updateMatchAnalysis({ id: match.id, customRoster: updated });
+                                                    }}
+                                                >
+                                                    <Text style={{ fontSize: 13, fontWeight: 'bold', color: mGender === 'F' ? '#B8338A' : '#1F6FD1', width: 20 }}>
+                                                        {mGender}
+                                                    </Text>
+                                                    <Text style={{ flex: 1, fontSize: 13, color: theme.colors.text }}>
+                                                        {m.nickname || m.firstName} {m.lastName || ''}
+                                                    </Text>
+                                                    <Text style={{ fontSize: 15, color: isCalled ? theme.colors.primary : theme.colors.textSecondary, fontWeight: 'bold' }}>
+                                                        {isCalled ? '✓' : '○'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+                                </ScrollView>
+
+                                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 14 }}>
+                                    <TouchableOpacity
+                                        style={[styles.startPtBtn, { paddingHorizontal: 24 }]}
+                                        onPress={() => setModalRosterVisible(false)}
+                                    >
+                                        <Text style={styles.startPtText}>Fatto</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </ScrollView>
+                        )}
+                    </View>
+                </View>
             </Modal>
+
+            {/* Modal Modifica Manuale Tocchi */}
+            <EditTouchesModal
+                visible={modalTouchesVisible}
+                match={match}
+                playerMap={playerMap}
+                onClose={() => setModalTouchesVisible(false)}
+                onSave={async (manualTouches) => {
+                    try {
+                        await updateMatchAnalysis({
+                            id: match.id,
+                            manualTouches
+                        });
+                        showAlert("Tocchi Salvati", `I tocchi dei giocatori per questa partita sono stati aggiornati.`);
+                    } catch (err: any) {
+                        showAlert("Errore", err?.message || "Impossibile salvare i tocchi.");
+                    }
+                }}
+            />
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1 },
-    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, borderBottomWidth: 1 },
-    scoreContainer: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    scoreText: { fontSize: 24, fontWeight: 'bold' },
-    scoreLabel: { fontSize: 24 },
-    setupContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 20 },
-    setupTitle: { fontSize: 20, fontWeight: 'bold' },
-    setupButtons: { flexDirection: 'row', gap: 20 },
-    setupButton: { paddingVertical: 15, paddingHorizontal: 30, borderRadius: 10 },
-    setupButtonText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
-    activePointContainer: { flex: 1, padding: 10 },
-    pointInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-    undoButton: { padding: 5 },
-    playerList: { maxHeight: 60, marginBottom: 10 },
-    playerCard: { padding: 8, borderRadius: 8, marginRight: 8, justifyContent: 'center', minWidth: 70, alignItems: 'center' },
-    playerName: { fontWeight: 'bold', fontSize: 12 },
-    statsGrid: { marginTop: 5 },
-    statsRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
-    statButton: { width: '30%', height: 80, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-    statButtonText: { color: 'white', fontSize: 20, fontWeight: 'bold' },
-    statButtonLabel: { color: 'white', fontSize: 10, textAlign: 'center' },
-    logContainer: { marginTop: 10, flex: 1 },
-    modalContainer: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-    modalContent: { height: '70%', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
-    modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
-    modalList: { flex: 1 },
-    modalItem: { padding: 15, borderBottomWidth: 0.5, borderBottomColor: '#ccc', flexDirection: 'row', justifyContent: 'space-between' },
-    modalItemText: { fontSize: 16 },
-    confirmButton: { padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 },
-    confirmButtonText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
-    copyButton: { padding: 10, borderRadius: 8, alignItems: 'center', marginBottom: 10 },
-    sectionTitle: { fontSize: 18, fontWeight: 'bold', marginTop: 10, marginBottom: 5 },
-    settingItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: '#ccc' },
-    colorDot: { width: 16, height: 16, borderRadius: 8 },
-    gearIconSmall: { width: 16, height: 16 },
-    input: { borderWidth: 1, borderRadius: 8, padding: 10, fontSize: 16 },
-    teamName: { fontSize: 12, fontWeight: 'bold', marginBottom: 2, maxWidth: 100 },
+    container: {
+        flex: 1,
+    },
+    matchHeader: {
+        paddingHorizontal: 16,
+        paddingTop: 4,
+        paddingBottom: 4,
+        borderBottomWidth: 1,
+        width: '100%',
+    },
+    headerActionsRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 6,
+        marginVertical: 4,
+        flexWrap: 'wrap',
+    },
+    headerBtn: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+        minWidth: 70,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    headerBtnMobile: {
+        flex: 1,
+        minWidth: 62,
+        paddingHorizontal: 4,
+        paddingVertical: 6,
+    },
+    headerBtnText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 12,
+    },
+    headerBtnTextMobile: {
+        fontSize: 11,
+    },
+    scoreRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginVertical: 4,
+        gap: 16,
+    },
+    teamScore: {
+        alignItems: 'center',
+        maxWidth: '44%',
+    },
+    teamName: {
+        fontSize: 12,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
+        textAlign: 'center',
+    },
+    scoreValue: {
+        fontSize: 28,
+        fontWeight: '900',
+    },
+    scoreDivider: {
+        fontSize: 24,
+        fontWeight: '300',
+    },
+    tabBar: {
+        flexDirection: 'row',
+        marginTop: 6,
+    },
+    tabItem: {
+        flex: 1,
+        paddingVertical: 10,
+        alignItems: 'center',
+        borderBottomWidth: 3,
+        borderBottomColor: 'transparent',
+    },
+    tabItemOn: {
+        borderBottomColor: '#003057',
+    },
+    tabText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#777',
+    },
+    tabTextOn: {
+        color: '#003057',
+    },
+    phaseContainer: {
+        padding: 14,
+        gap: 12,
+    },
+    lockedBanner: {
+        marginHorizontal: 14,
+        marginTop: 12,
+        marginBottom: 4,
+        padding: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        alignItems: 'center',
+    },
+    lockedTitle: {
+        fontSize: 13,
+        fontWeight: 'bold',
+        color: '#37474F',
+        marginBottom: 2,
+    },
+    lockedSub: {
+        fontSize: 11,
+        color: '#546E7A',
+        textAlign: 'center',
+    },
+    ratioBanner: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 12,
+    },
+    ratioSub: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#fff',
+        opacity: 0.8,
+    },
+    ratioMain: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#fff',
+    },
+    ratioFlipBtn: {
+        backgroundColor: '#fff',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    ratioFlipText: {
+        fontSize: 12,
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    statusBanner: {
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    statusTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    statusSub: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    promptBanner: {
+        backgroundColor: '#C0D725',
+        padding: 12,
+        borderRadius: 12,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    promptTitle: {
+        fontSize: 15,
+        fontWeight: '900',
+        color: '#131E29',
+    },
+    promptActionBtn: {
+        backgroundColor: '#fff',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+    },
+    promptActionText: {
+        fontSize: 12,
+        fontWeight: 'bold',
+        color: '#131E29',
+    },
+    card: {
+        borderRadius: 14,
+        padding: 14,
+        borderWidth: 1,
+        marginBottom: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    cardTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        marginBottom: 6,
+    },
+    muted: {
+        fontSize: 13,
+    },
+    rowBetween: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    segment: {
+        flexDirection: 'row',
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        overflow: 'hidden',
+    },
+    segBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        backgroundColor: '#fff',
+    },
+    segBtnOn: {
+        backgroundColor: '#003057',
+    },
+    segText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#333',
+    },
+    segTextOn: {
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+    playerGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 8,
+    },
+    pbtn: {
+        flex: 1,
+        minHeight: 56,
+        padding: 8,
+        borderRadius: 10,
+        borderWidth: 2,
+        position: 'relative',
+        justifyContent: 'center',
+    },
+    pbtnMobile: {
+        minWidth: '47%',
+        maxWidth: '49%',
+    },
+    pbtnDesktop: {
+        minWidth: '30%',
+        maxWidth: '32%',
+    },
+    pbtnSel: {
+        borderWidth: 2,
+        borderColor: '#003057',
+    },
+    pbtnPick: {
+        borderColor: '#C0D725',
+        backgroundColor: '#F6FAD9',
+    },
+    pbtnHolder: {
+        borderColor: '#2E8540',
+        borderWidth: 2,
+    },
+    pbtnName: {
+        fontSize: 13,
+        fontWeight: 'bold',
+    },
+    pbtnSub: {
+        fontSize: 10,
+        color: '#777',
+        marginTop: 2,
+    },
+    genderBadge: {
+        position: 'absolute',
+        top: 6,
+        right: 6,
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 4,
+    },
+    genderText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    lineBar: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 12,
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    chip: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 20,
+    },
+    chipText: {
+        fontWeight: 'bold',
+        fontSize: 12,
+        color: '#131E29',
+    },
+    lineUtilBtn: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 6,
+        backgroundColor: '#f9f9f9',
+    },
+    lineUtilText: {
+        fontSize: 11,
+        color: '#444',
+    },
+    startPtBtn: {
+        backgroundColor: '#003057',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 10,
+    },
+    startPtBtnMobile: {
+        width: '100%',
+        marginTop: 4,
+        alignItems: 'center',
+    },
+    startPtText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    skipBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+    },
+    skipBtnText: {
+        fontSize: 12,
+        color: '#555',
+    },
+    actionsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 8,
+    },
+    actBtn: {
+        flex: 1,
+        minWidth: '47%',
+        maxWidth: '49%',
+        minHeight: 64,
+        borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 8,
+    },
+    actBtnHero: {
+        minWidth: '100%',
+        maxWidth: '100%',
+        minHeight: 62,
+    },
+    actTitle: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    actSub: {
+        color: '#fff',
+        fontSize: 10,
+        opacity: 0.85,
+        marginTop: 2,
+    },
+    defenseCard: {
+        borderWidth: 2,
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 3,
+        elevation: 2,
+    },
+    defenseCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    defenseCardIcon: {
+        fontSize: 16,
+    },
+    defenseCardTitle: {
+        fontSize: 13,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
+    },
+    activeSchemaTag: {
+        backgroundColor: '#E07A1F',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+    },
+    activeSchemaTagText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: 'bold',
+    },
+    missingSchemaTag: {
+        backgroundColor: '#FFF3E0',
+        borderWidth: 1,
+        borderColor: '#FFB74D',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+    },
+    missingSchemaTagText: {
+        color: '#D84315',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    defenseSchemaRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    defenseSchemaBtn: {
+        flex: 1,
+        paddingVertical: 10,
+        borderRadius: 8,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    defenseSchemaBtnActive: {
+        shadowColor: '#E07A1F',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+    defenseSchemaText: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    defenseSchemaTextActive: {
+        fontWeight: 'bold',
+    },
+    halfTimeBtn: {
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 8,
+        backgroundColor: '#E07A1F18',
+        borderWidth: 1,
+        borderColor: '#E07A1F',
+    },
+    halfTimeBtnText: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#E07A1F',
+    },
+    halfTimeBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+        backgroundColor: '#2E854018',
+        borderWidth: 1,
+        borderColor: '#2E8540',
+    },
+    halfTimeBadgeText: {
+        fontSize: 10,
+        fontWeight: 'bold',
+        color: '#2E8540',
+    },
+    halfTimeNotice: {
+        backgroundColor: '#FFF3E0',
+        borderColor: '#FFB74D',
+        borderWidth: 1,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        marginBottom: 8,
+    },
+    halfTimeNoticeText: {
+        color: '#D84315',
+        fontSize: 11,
+        fontWeight: '600',
+    },
+    dsetsContainer: {
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 6,
+        paddingHorizontal: 4,
+    },
+    dsetsTitle: {
+        fontSize: 13,
+        fontWeight: 'bold',
+    },
+    changeLineBtn: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 6,
+        backgroundColor: '#eee',
+    },
+    changeLineText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#333',
+    },
+    subReasonCard: {
+        borderWidth: 2,
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 10,
+    },
+    subReasonTitle: {
+        fontSize: 13,
+        fontWeight: 'bold',
+    },
+    subReasonDesc: {
+        fontSize: 11,
+        lineHeight: 15,
+        marginTop: 2,
+    },
+    statsScroll: {
+        flex: 1,
+    },
+    statsScrollContent: {
+        padding: 14,
+        paddingBottom: 48,
+        gap: 16,
+    },
+    kpiGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 8,
+    },
+    kpiItem: {
+        flex: 1,
+        padding: 10,
+        borderRadius: 10,
+    },
+    kpiItemMobile: {
+        minWidth: '47%',
+        maxWidth: '49%',
+    },
+    kpiItemDesktop: {
+        minWidth: '30%',
+        maxWidth: '32%',
+    },
+    kpiVal: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#131E29',
+    },
+    kpiLbl: {
+        fontSize: 10,
+        color: '#5B6570',
+        marginTop: 2,
+    },
+    tableHeaderRow: {
+        flexDirection: 'row',
+        backgroundColor: '#EEF1F4',
+        paddingVertical: 6,
+        paddingHorizontal: 4,
+        borderRadius: 6,
+    },
+    thCell: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#5B6570',
+        textAlign: 'center',
+    },
+    tableRow: {
+        flexDirection: 'row',
+        paddingVertical: 6,
+        paddingHorizontal: 4,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+    },
+    tdCell: {
+        fontSize: 12,
+        textAlign: 'center',
+    },
+    filterChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#ccc',
+    },
+    filterChipOn: {
+        backgroundColor: '#C0D725',
+        borderColor: '#C0D725',
+    },
+    filterChipText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#333',
+    },
+    filterChipTextOn: {
+        fontWeight: 'bold',
+        color: '#131E29',
+    },
+    logItem: {
+        paddingVertical: 4,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+    },
+    logText: {
+        fontSize: 12,
+    },
+    modalBg: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        padding: 16,
+    },
+    modalBox: {
+        borderRadius: 16,
+        padding: 18,
+        maxHeight: '80%',
+    },
 });

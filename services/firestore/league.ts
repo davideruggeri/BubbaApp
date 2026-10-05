@@ -4,11 +4,11 @@
 import { db } from '../../firebaseConfig';
 import {
     collection, addDoc, deleteDoc, doc, setDoc, updateDoc,
-    onSnapshot, query, where, getDocs, getDoc
+    onSnapshot, query, where, getDocs, getDoc, writeBatch
 } from 'firebase/firestore';
 import type {
     LeagueTeam, LeagueMatch, LeagueDates, LeagueBonus,
-    LeagueRule, BonusDefinition, PastLeague
+    LeagueRule, BonusDefinition, PastLeague, Member
 } from './types';
 
 // --- League Dates ---
@@ -200,5 +200,129 @@ export const archiveLeague = async (data: PastLeague) => {
     } catch (error) {
         console.error("Error archiving league:", error);
         throw error;
+    }
+};
+
+export const resetLeagueData = async (leagueType: 'winter' | 'summer') => {
+    try {
+        // 1. Elimina i bonus correnti dal database attivo
+        const bonusesSnap = await getDocs(collection(db, 'league', leagueType, 'bonuses'));
+        let batch = writeBatch(db);
+        let count = 0;
+        for (const docSnap of bonusesSnap.docs) {
+            batch.delete(docSnap.ref);
+            count++;
+            if (count >= 400) {
+                await batch.commit();
+                batch = writeBatch(db);
+                count = 0;
+            }
+        }
+        if (count > 0) {
+            await batch.commit();
+        }
+
+        // 2. Resetta le date del campionato
+        await setDoc(doc(db, 'impostazione', `League_${leagueType}_Dates`), {
+            startDate: '',
+            endDate: ''
+        });
+    } catch (error) {
+        console.error(`Error resetting ${leagueType} league:`, error);
+        throw error;
+    }
+};
+
+export const archiveAndResetLeague = async (leagueType: 'winter' | 'summer', data: PastLeague) => {
+    try {
+        // 1. Salva nell'archivio storico (inclusi classifica, vincitore e dettaglio bonus)
+        await archiveLeague(data);
+
+        // 2. Pulisce la lega attiva per il nuovo anno
+        await resetLeagueData(leagueType);
+    } catch (error) {
+        console.error(`Error archiving and resetting ${leagueType} league:`, error);
+        throw error;
+    }
+};
+
+export const autoArchiveWinterLeagueIfNeeded = async (): Promise<boolean> => {
+    try {
+        const datesDoc = await getDoc(doc(db, 'impostazione', 'League_winter_Dates'));
+        if (!datesDoc.exists()) return false;
+        const dates = datesDoc.data() as LeagueDates;
+        if (!dates.startDate || !dates.endDate) return false;
+
+        // Recupera membri per calcolo classifica
+        const membersSnap = await getDocs(collection(db, 'members'));
+        const members = membersSnap.docs.map(d => ({ id: d.id, ...d.data() } as Member));
+
+        // Presenze nel periodo
+        const presenzeSnap = await getDocs(query(
+            collection(db, 'presenze'),
+            where('date', '>=', dates.startDate),
+            where('date', '<=', dates.endDate)
+        ));
+
+        // Bonus correnti
+        const bonusesSnap = await getDocs(collection(db, 'league', 'winter', 'bonuses'));
+        const bonuses = bonusesSnap.docs.map(d => ({ id: d.id, ...d.data() } as LeagueBonus));
+
+        const stats: Record<string, { member: Member, points: number, attendanceCount: number, bonusPoints: number }> = {};
+        members.forEach(m => {
+            stats[m.id] = { member: m, points: 0, attendanceCount: 0, bonusPoints: 0 };
+        });
+
+        presenzeSnap.docs.forEach(docSnap => {
+            const data = docSnap.data();
+            const mId = data.memberId;
+            if (stats[mId]) {
+                stats[mId].points += 2;
+                stats[mId].attendanceCount += 1;
+            }
+        });
+
+        const leagueBonuses: LeagueBonus[] = [];
+        bonuses.forEach(b => {
+            if (b.date >= dates.startDate && b.date <= dates.endDate) {
+                leagueBonuses.push(b);
+                if (stats[b.memberId]) {
+                    stats[b.memberId].bonusPoints += b.points;
+                    stats[b.memberId].points += b.points;
+                }
+            }
+        });
+
+        const sorted = Object.values(stats)
+            .filter(s => s.points > 0 || s.attendanceCount > 0 || s.bonusPoints !== 0)
+            .sort((a, b) => b.points !== a.points ? b.points - a.points : b.attendanceCount - a.attendanceCount);
+
+        const winnerId = sorted.length > 0 ? sorted[0].member.id : '';
+        const endYear = dates.endDate.split('-')[0];
+
+        const pastLeagueData: PastLeague = {
+            id: `winter_${endYear}`,
+            name: `Winter League ${endYear}`,
+            startDate: dates.startDate,
+            endDate: dates.endDate,
+            type: 'winter',
+            winnerId,
+            totalParticipants: sorted.length,
+            bonuses: leagueBonuses,
+            standings: sorted.map((s, index) => ({
+                id: s.member.id,
+                name: s.member.nickname || s.member.firstName,
+                points: s.points,
+                attendanceCount: s.attendanceCount,
+                bonusPoints: s.bonusPoints,
+                rank: index + 1
+            }))
+        };
+
+        await archiveAndResetLeague('winter', pastLeagueData);
+        return true;
+    } catch (error) {
+        console.error("Error auto-archiving winter league:", error);
+        return false;
     }
 };

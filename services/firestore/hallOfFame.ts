@@ -138,6 +138,19 @@ export const restoreEventFromHallOfFame = async (entry: HallOfFameEntry) => {
 
 // --- Roster ---
 
+export const getEventRoster = async (eventId: string): Promise<RosterMember[]> => {
+    try {
+        const q = query(collection(db, 'roster'), where('eventId', '==', eventId));
+        const snapshot = await getDocs(q);
+        const roster = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RosterMember));
+        roster.sort((a, b) => a.name.localeCompare(b.name));
+        return roster;
+    } catch (e) {
+        console.error("Error fetching event roster:", e);
+        return [];
+    }
+};
+
 export const subscribeToRoster = (eventId: string, callback: (roster: RosterMember[]) => void) => {
     const q = query(collection(db, 'roster'), where('eventId', '==', eventId));
     return onSnapshot(q, (snapshot) => {

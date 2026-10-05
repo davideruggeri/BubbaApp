@@ -31,6 +31,8 @@ import {
     type PastLeague,
     checkIfLeagueArchived,
     archiveLeague,
+    archiveAndResetLeague,
+    resetLeagueData,
     type PastLeagueMember
 } from '../services/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -435,12 +437,12 @@ export default function LeagueScreen() {
     };
 
     const handleArchiveLeague = async () => {
-        if (!leagueDates) return;
+        if (!leagueDates || !leagueDates.endDate) return;
 
         const title = isLeagueArchived ? "Aggiorna Archivio" : "Archivia Lega";
         const message = isLeagueArchived
             ? "La lega è già stata archiviata. Vuoi sovrascrivere lo storico con i dati attuali?"
-            : "Vuoi salvare i risultati di questa lega nello storico? Questa operazione non può essere annullata.";
+            : "Vuoi salvare i risultati di questa lega nello storico senza cancellare i dati attivi?";
         const confirmText = isLeagueArchived ? "Aggiorna" : "Archivia";
 
         showConfirmation(
@@ -448,20 +450,23 @@ export default function LeagueScreen() {
             message,
             async () => {
                 try {
-                    // 1. Calculate final standings
                     const currentStandings = calculateStandings();
                     const top3 = currentStandings.slice(0, 3);
                     const winnerId = top3.length > 0 ? top3[0].member.id : '';
+                    const leagueBonuses = bonuses.filter(b => 
+                        (!leagueDates.startDate || b.date >= leagueDates.startDate) &&
+                        (!leagueDates.endDate || b.date <= leagueDates.endDate)
+                    );
 
-                    // 2. Prepare PastLeague data
                     const pastLeagueData: PastLeague = {
-                        id: `${leagueType}_${leagueDates.endDate.split('-')[0]}`, // e.g., winter_2025
+                        id: `${leagueType}_${leagueDates.endDate.split('-')[0]}`,
                         name: `${leagueType === 'winter' ? 'Winter' : 'Summer'} League ${leagueDates.endDate.split('-')[0]}`,
                         startDate: leagueDates.startDate,
                         endDate: leagueDates.endDate,
                         type: leagueType,
                         winnerId: winnerId,
                         totalParticipants: currentStandings.length,
+                        bonuses: leagueBonuses,
                         standings: currentStandings.map((s, index): PastLeagueMember => ({
                             id: s.member.id,
                             name: s.member.nickname || s.member.firstName,
@@ -472,7 +477,6 @@ export default function LeagueScreen() {
                         }))
                     };
 
-                    // 3. Archive
                     await archiveLeague(pastLeagueData);
                     setIsLeagueArchived(true);
                     showAlert("Successo", isLeagueArchived ? "Archivio aggiornato!" : "Lega archiviata correttamente!");
@@ -482,6 +486,71 @@ export default function LeagueScreen() {
                 }
             },
             confirmText
+        );
+    };
+
+    const handleArchiveAndResetLeague = async () => {
+        if (!leagueDates || !leagueDates.endDate) return;
+
+        showConfirmation(
+            "Archivia e Pulisci per Nuova Stagione",
+            "I risultati, la classifica e i bonus verranno archiviati nello storico. La scheda attiva verrà azzerata per iniziare la nuova stagione. Confermi?",
+            async () => {
+                try {
+                    const currentStandings = calculateStandings();
+                    const top3 = currentStandings.slice(0, 3);
+                    const winnerId = top3.length > 0 ? top3[0].member.id : '';
+                    const leagueBonuses = bonuses.filter(b => 
+                        (!leagueDates.startDate || b.date >= leagueDates.startDate) &&
+                        (!leagueDates.endDate || b.date <= leagueDates.endDate)
+                    );
+
+                    const pastLeagueData: PastLeague = {
+                        id: `${leagueType}_${leagueDates.endDate.split('-')[0]}`,
+                        name: `${leagueType === 'winter' ? 'Winter' : 'Summer'} League ${leagueDates.endDate.split('-')[0]}`,
+                        startDate: leagueDates.startDate,
+                        endDate: leagueDates.endDate,
+                        type: leagueType,
+                        winnerId: winnerId,
+                        totalParticipants: currentStandings.length,
+                        bonuses: leagueBonuses,
+                        standings: currentStandings.map((s, index): PastLeagueMember => ({
+                            id: s.member.id,
+                            name: s.member.nickname || s.member.firstName,
+                            points: s.points,
+                            attendanceCount: s.attendanceCount,
+                            bonusPoints: s.bonusPoints,
+                            rank: index + 1
+                        }))
+                    };
+
+                    await archiveAndResetLeague(leagueType, pastLeagueData);
+                    setIsLeagueArchived(false);
+                    showAlert("Successo", "Lega archiviata nello storico e scheda pulita per il nuovo anno!");
+                } catch (error) {
+                    console.error(error);
+                    showAlert("Errore", "Impossibile archiviare e resettare la lega.");
+                }
+            },
+            "Archivia e Pulisci"
+        );
+    };
+
+    const handleResetLeagueOnly = async () => {
+        showConfirmation(
+            "Pulisci Scheda per Nuova Stagione",
+            "I dati sono già archiviati nello storico. Vuoi azzerare le date e rimuovere i vecchi bonus per iniziare la nuova stagione?",
+            async () => {
+                try {
+                    await resetLeagueData(leagueType);
+                    setIsLeagueArchived(false);
+                    showAlert("Successo", "Scheda pulita! Puoi ora impostare le date della nuova stagione.");
+                } catch (error) {
+                    console.error(error);
+                    showAlert("Errore", "Impossibile resettare la lega.");
+                }
+            },
+            "Pulisci Scheda"
         );
     };
 
@@ -498,11 +567,29 @@ export default function LeagueScreen() {
     }, [leagueDates, leagueType]);
 
     const renderCountdown = () => {
-        if (!leagueDates || !leagueDates.startDate || !leagueDates.endDate) {
+        const hasDates = leagueDates && leagueDates.startDate && leagueDates.endDate;
+
+        if (!hasDates) {
             return (
-                <View style={styles.countdownContainer}>
-                    <Text style={styles.countdownLabel}>Stato</Text>
-                    <Text style={styles.countdownValue}>In attesa delle date</Text>
+                <View style={[styles.countdownCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                    <View style={styles.countdownHeaderRow}>
+                        <View style={[styles.statusChip, { backgroundColor: theme.colors.sectionBackground }]}>
+                            <Text style={[styles.statusChipText, { color: theme.colors.textSecondary }]}>⚪ In attesa delle date</Text>
+                        </View>
+                    </View>
+                    <Text style={[styles.countdownDescText, { color: theme.colors.textSecondary }]}>
+                        Le date della {leagueType === 'winter' ? 'Winter' : 'Summer'} League non sono ancora impostate per questa stagione.
+                    </Text>
+                    {!isBubbaOnly && (
+                        <View style={styles.countdownButtonsRow}>
+                            <TouchableOpacity
+                                style={[styles.cardActionBtnPrimary, { backgroundColor: theme.colors.primary }]}
+                                onPress={() => setDatesModalVisible(true)}
+                            >
+                                <Text style={styles.cardActionBtnTextPrimary}>📅 Imposta Date Campionato</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
                 </View>
             );
         }
@@ -522,42 +609,119 @@ export default function LeagueScreen() {
             return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         };
 
-        if (today < start) {
-            const days = getDaysDiff(today, start);
-            return (
-                <View style={styles.countdownContainer}>
-                    <Text style={styles.countdownLabel}>Inizia tra</Text>
-                    <Text style={styles.countdownValue}>{days} giorni</Text>
-                </View>
-            );
-        } else if (today >= start && today <= end) {
-            const days = getDaysDiff(today, end);
-            return (
-                <View style={styles.countdownContainer}>
-                    <Text style={styles.countdownLabel}>Termina tra</Text>
-                    <Text style={styles.countdownValue}>{days} giorni</Text>
-                </View>
-            );
-        } else {
-            return (
-                <View style={styles.countdownContainer}>
-                    <Text style={styles.countdownLabel}>Stato</Text>
-                    <Text style={styles.countdownValue}>Lega Terminata</Text>
-                    {/* Archive Button for Admins */}
-                    {!isBubbaOnly && !isLeagueArchived && (
-                        <TouchableOpacity
-                            style={[styles.actionButton, { backgroundColor: theme.colors.primary, marginTop: 5, paddingHorizontal: 10, paddingVertical: 5 }]}
-                            onPress={handleArchiveLeague}
-                        >
-                            <Text style={styles.actionButtonText}>Archivia e Salva</Text>
-                        </TouchableOpacity>
+        const isUpcoming = today < start;
+        const isActive = today >= start && today <= end;
+        const isFinished = today > end;
+        const dateRangeLabel = `${formatDateForDisplay(leagueDates.startDate)} ➔ ${formatDateForDisplay(leagueDates.endDate)}`;
+
+        return (
+            <View style={[styles.countdownCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+                {/* Header row: Status chip + Date Range */}
+                <View style={styles.countdownHeaderRow}>
+                    {isUpcoming && (
+                        <View style={[styles.statusChip, { backgroundColor: '#fef3c7' }]}>
+                            <Text style={[styles.statusChipText, { color: '#b45309' }]}>🟡 In Arrivo</Text>
+                        </View>
                     )}
-                    {isLeagueArchived && (
-                        <Text style={{ color: theme.colors.success, fontSize: 12, marginTop: 2 }}>Archiviata nello Storico</Text>
+                    {isActive && (
+                        <View style={[styles.statusChip, { backgroundColor: '#dcfce7' }]}>
+                            <Text style={[styles.statusChipText, { color: '#15803d' }]}>🟢 In Corso</Text>
+                        </View>
+                    )}
+                    {isFinished && (
+                        <View style={[styles.statusChip, { backgroundColor: '#fee2e2' }]}>
+                            <Text style={[styles.statusChipText, { color: '#b91c1c' }]}>🏁 Conclusa</Text>
+                        </View>
+                    )}
+
+                    <Text style={[styles.dateRangeText, { color: theme.colors.textSecondary }]}>
+                        {dateRangeLabel}
+                    </Text>
+                </View>
+
+                {/* Main Countdown or Status Message */}
+                <View style={styles.countdownBody}>
+                    {isUpcoming && (
+                        <View style={{ alignItems: 'center' }}>
+                            <Text style={[styles.countdownSmallLabel, { color: theme.colors.textSecondary }]}>Inizio campionato</Text>
+                            <Text style={[styles.countdownBigValue, { color: theme.colors.primary }]}>
+                                tra {getDaysDiff(today, start)} giorni
+                            </Text>
+                        </View>
+                    )}
+                    {isActive && (
+                        <View style={{ alignItems: 'center' }}>
+                            <Text style={[styles.countdownSmallLabel, { color: theme.colors.textSecondary }]}>Tempo rimanente</Text>
+                            <Text style={[styles.countdownBigValue, { color: theme.colors.primary }]}>
+                                {getDaysDiff(today, end)} {getDaysDiff(today, end) === 1 ? 'giorno' : 'giorni'}
+                            </Text>
+                        </View>
+                    )}
+                    {isFinished && (
+                        <View style={{ alignItems: 'center' }}>
+                            <Text style={[styles.countdownBigValue, { color: theme.colors.text, fontSize: 18 }]}>
+                                Campionato Concluso
+                            </Text>
+                            {isLeagueArchived ? (
+                                <Text style={{ color: theme.colors.success, fontSize: 13, marginTop: 4, fontWeight: '600' }}>
+                                    ✓ Classifica archiviata nello storico
+                                </Text>
+                            ) : (
+                                <Text style={[styles.countdownDescText, { color: theme.colors.textSecondary, marginTop: 2 }]}>
+                                    Archivia i dati per conservare lo storico e azzerare la scheda.
+                                </Text>
+                            )}
+                        </View>
                     )}
                 </View>
-            );
-        }
+
+                {/* Admin Action Buttons */}
+                {!isBubbaOnly && (
+                    <View style={styles.countdownButtonsRow}>
+                        {isFinished ? (
+                            !isLeagueArchived ? (
+                                <>
+                                    <TouchableOpacity
+                                        style={[styles.cardActionBtnPrimary, { backgroundColor: theme.colors.primary }]}
+                                        onPress={handleArchiveAndResetLeague}
+                                    >
+                                        <Text style={styles.cardActionBtnTextPrimary}>📦 Archivia e Pulisci</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.cardActionBtnSecondary, { borderColor: theme.colors.primary }]}
+                                        onPress={handleArchiveLeague}
+                                    >
+                                        <Text style={[styles.cardActionBtnTextSecondary, { color: theme.colors.primary }]}>💾 Solo Archivia</Text>
+                                    </TouchableOpacity>
+                                </>
+                            ) : (
+                                <>
+                                    <TouchableOpacity
+                                        style={[styles.cardActionBtnPrimary, { backgroundColor: theme.colors.primary }]}
+                                        onPress={handleResetLeagueOnly}
+                                    >
+                                        <Text style={styles.cardActionBtnTextPrimary}>🔄 Pulisci Scheda per Nuovo Anno</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.cardActionBtnSecondary, { borderColor: theme.colors.border }]}
+                                        onPress={() => setDatesModalVisible(true)}
+                                    >
+                                        <Text style={[styles.cardActionBtnTextSecondary, { color: theme.colors.textSecondary }]}>✏️ Modifica Date</Text>
+                                    </TouchableOpacity>
+                                </>
+                            )
+                        ) : (
+                            <TouchableOpacity
+                                style={[styles.cardActionBtnSecondary, { borderColor: theme.colors.border }]}
+                                onPress={() => setDatesModalVisible(true)}
+                            >
+                                <Text style={[styles.cardActionBtnTextSecondary, { color: theme.colors.textSecondary }]}>✏️ Modifica Date</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                )}
+            </View>
+        );
     };
 
     const renderRules = () => (
@@ -863,6 +1027,29 @@ export default function LeagueScreen() {
                                 <Text style={{ textAlign: 'center', color: theme.colors.textSecondary, marginBottom: 10 }}>
                                     Partecipanti totali: {currentLeague?.totalParticipants}
                                 </Text>
+
+                                {currentLeague?.standings && currentLeague.standings.length > 0 && (
+                                    <ScrollView style={{ flex: 1, maxHeight: 220, marginTop: 4 }} contentContainerStyle={{ paddingBottom: 10 }}>
+                                        {currentLeague.standings.map((member, sIdx) => (
+                                            <View
+                                                key={member.id || sIdx}
+                                                style={[
+                                                    styles.row,
+                                                    sIdx % 2 === 0 && { backgroundColor: theme.colors.sectionBackground },
+                                                    { borderBottomColor: theme.colors.border, paddingVertical: 6 }
+                                                ]}
+                                            >
+                                                <Text style={[styles.cell, styles.cellRank, { color: theme.colors.primary }]}>{member.rank || sIdx + 1}</Text>
+                                                <Text style={[styles.cell, styles.cellTeam, { color: theme.colors.text }]} numberOfLines={1}>{member.name}</Text>
+                                                <Text style={[styles.cell, styles.cellPoints, { color: theme.colors.text }]}>{member.points} pt</Text>
+                                                <Text style={[styles.cell, { color: theme.colors.textSecondary, fontSize: 12 }]}>{member.attendanceCount} pres.</Text>
+                                                <Text style={[styles.cell, { color: (member.bonusPoints || 0) >= 0 ? theme.colors.success : theme.colors.danger, fontSize: 12 }]}>
+                                                    {(member.bonusPoints || 0) > 0 ? `+${member.bonusPoints}` : (member.bonusPoints || 0)}
+                                                </Text>
+                                            </View>
+                                        ))}
+                                    </ScrollView>
+                                )}
                             </>
                         )}
                     </View>
@@ -1279,22 +1466,24 @@ export default function LeagueScreen() {
                         </View>
 
                         {settingsTab === 'dates' && (
-                            <View>
-                                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Data Inizio:</Text>
-                                <TouchableOpacity onPress={() => setShowStartPicker(true)} style={[styles.dateInput, { backgroundColor: theme.colors.inputBackground }]}>
-                                    <Text style={{ color: theme.colors.text }}>{formatDateForDisplay(datesInput.startDate)}</Text>
-                                </TouchableOpacity>
+                            <View style={{ flex: 1, justifyContent: 'space-between' }}>
+                                <View>
+                                    <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Data Inizio:</Text>
+                                    <TouchableOpacity onPress={() => setShowStartPicker(true)} style={[styles.dateInput, { backgroundColor: theme.colors.inputBackground }]}>
+                                        <Text style={{ color: theme.colors.text }}>{formatDateForDisplay(datesInput.startDate)}</Text>
+                                    </TouchableOpacity>
 
-                                <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Data Fine:</Text>
-                                <TouchableOpacity onPress={() => setShowEndPicker(true)} style={[styles.dateInput, { backgroundColor: theme.colors.inputBackground }]}>
-                                    <Text style={{ color: theme.colors.text }}>{formatDateForDisplay(datesInput.endDate)}</Text>
-                                </TouchableOpacity>
+                                    <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Data Fine:</Text>
+                                    <TouchableOpacity onPress={() => setShowEndPicker(true)} style={[styles.dateInput, { backgroundColor: theme.colors.inputBackground }]}>
+                                        <Text style={{ color: theme.colors.text }}>{formatDateForDisplay(datesInput.endDate)}</Text>
+                                    </TouchableOpacity>
+                                </View>
 
-                                <View style={styles.modalButtons}>
+                                <View style={[styles.modalButtons, { marginTop: 'auto', paddingBottom: 10 }]}>
                                     <TouchableOpacity style={[styles.button, styles.cancelButton, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]} onPress={() => setDatesModalVisible(false)}>
                                         <Text style={[styles.buttonText, { color: theme.colors.textSecondary }]}>Annulla</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={[styles.button, styles.saveButton]} onPress={handleSaveDates}>
+                                    <TouchableOpacity style={[styles.button, styles.saveButton, { backgroundColor: theme.colors.primary }]} onPress={handleSaveDates}>
                                         <Text style={styles.buttonText}>Salva</Text>
                                     </TouchableOpacity>
                                 </View>
@@ -1690,6 +1879,99 @@ const styles = StyleSheet.create({
         height: 20,
         marginRight: 5,
         resizeMode: 'contain',
+    },
+    countdownCard: {
+        width: '100%',
+        marginTop: 12,
+        borderRadius: 16,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderWidth: 1,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+        elevation: 2,
+    },
+    countdownHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    statusChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+    },
+    statusChipText: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+    },
+    dateRangeText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    countdownBody: {
+        alignItems: 'center',
+        paddingVertical: 4,
+    },
+    countdownSmallLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 2,
+    },
+    countdownBigValue: {
+        fontSize: 22,
+        fontWeight: 'bold',
+    },
+    countdownDescText: {
+        fontSize: 13,
+        textAlign: 'center',
+        marginTop: 4,
+        lineHeight: 18,
+    },
+    countdownButtonsRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 10,
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    cardActionBtnPrimary: {
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 1,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.15,
+        shadowRadius: 2,
+    },
+    cardActionBtnSecondary: {
+        paddingVertical: 7,
+        paddingHorizontal: 14,
+        borderRadius: 20,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'transparent',
+    },
+    cardActionBtnTextPrimary: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 13,
+    },
+    cardActionBtnTextSecondary: {
+        fontWeight: '600',
+        fontSize: 13,
     },
     countdownContainer: {
         marginTop: 15,
