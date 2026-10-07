@@ -218,7 +218,24 @@ export const subscribeToMemberTournaments = (
 
             const tournamentsMap = new Map<string, MemberTournament>();
 
-            // 1. Tournaments from 'roster' (linked to 'calendario')
+            const today = new Date().toISOString().split('T')[0];
+            const isFriendlyMatch = (item: any) => {
+                if (!item) return false;
+                const t = (item.type || '').toLowerCase().trim();
+                const sub = (item.subType || '').toLowerCase().trim();
+                const title = (item.title || '').toLowerCase().trim();
+                return t === 'match' || t === 'amichevole' || sub === 'match' || sub === 'amichevole' || title.includes('amichevol');
+            };
+
+            const isTournamentOrChampionship = (type?: string, item?: any) => {
+                if (item && isFriendlyMatch(item)) return false;
+                if (!type) return false;
+                const t = type.toLowerCase().trim();
+                if (t === 'match' || t === 'amichevole') return false;
+                return t === 'tournament' || t === 'torneo' || t === 'championship' || t === 'campionato' || t === 'championship_season';
+            };
+
+            // 1. Tournaments & Championships from 'roster' (linked to 'calendario')
             const rosterQuery = query(collection(db, 'roster'), where('memberId', '==', memberId));
             const rosterSnap = await getDocs(rosterQuery);
             const calSnap = await getDocs(collection(db, 'calendario'));
@@ -228,8 +245,11 @@ export const subscribeToMemberTournaments = (
             rosterSnap.docs.forEach(docSnap => {
                 const rData = docSnap.data();
                 const event = calMap.get(rData.eventId);
-                if (event) {
+                if (event && !isFriendlyMatch(event) && isTournamentOrChampionship(event.type, event)) {
                     const eventDate = event.date || event.id;
+                    // Solo eventi già svolti (non futuri)
+                    if (eventDate > today) return;
+
                     const eventSeason = event.stagione || getStagioneFromDate(eventDate);
                     const isCurrent = eventSeason === currentSeason;
                     const key = `${(event.title || '').trim().toLowerCase()}_${eventDate}`;
@@ -253,6 +273,8 @@ export const subscribeToMemberTournaments = (
             const alboSnap = await getDocs(collection(db, 'albo'));
             alboSnap.docs.forEach(d => {
                 const data = d.data();
+                if (isFriendlyMatch(data)) return;
+
                 const roster = Array.isArray(data.roster) ? data.roster : [];
                 const entry = roster.find((r: any) =>
                     r.memberId === memberId ||
@@ -262,7 +284,21 @@ export const subscribeToMemberTournaments = (
 
                 if (entry) {
                     const date = data.date || (data.createdAt ? data.createdAt.split('T')[0] : '');
+                    if (date && date > today) return;
+
                     const title = data.title || 'Torneo';
+
+                    // Verifica se corrisponde a un evento a calendario di tipo amichevole
+                    const calEvent = calMap.get(d.id) || Array.from(calMap.values()).find((ce: any) => {
+                        const ceDate = ce.date || ce.id;
+                        return ce.title && data.title &&
+                            ce.title.trim().toLowerCase() === data.title.trim().toLowerCase() &&
+                            ceDate === date;
+                    });
+                    if (calEvent && (isFriendlyMatch(calEvent) || !isTournamentOrChampionship(calEvent.type, calEvent))) {
+                        return;
+                    }
+
                     const key = `${title.trim().toLowerCase()}_${date}`;
 
                     const alreadyExists = Array.from(tournamentsMap.values()).some(existing => {

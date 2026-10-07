@@ -18,7 +18,8 @@ import {
     subscribeToEvents,
     Event,
     getMemberAttendance,
-    assignTiedRanks
+    assignTiedRanks,
+    isMemberActiveAtDate
 } from '../services/firestore';
 import ScreenTitle from '../components/ScreenTitle';
 import { useAuth } from '../context/AuthContext';
@@ -418,14 +419,8 @@ export default function AttendanceScreen() {
         // 1. Always show if they are marked present (just in case)
         if (attendeeIds.includes(m.id)) return true;
 
-        // 2. If they are active (no inactiveSince), show them
-        if (!m.inactiveSince) return true;
-
-        // 3. If they are inactive, show them ONLY if they were active ON the current date
-        // i.e., inactiveSince is AFTER currentDate
-        // Example: Inactive since 2023-11-01. Current Date 2023-10-31. Show? Yes.
-        // Example: Inactive since 2023-11-01. Current Date 2023-11-02. Show? No.
-        return m.inactiveSince > currentDate;
+        // 2. Verifica se il membro era attivo/disponibile per questa data
+        return isMemberActiveAtDate(m, currentDate);
     });
 
     const men = filteredMembers.filter(m => m.gender === 'M');

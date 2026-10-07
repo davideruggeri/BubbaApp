@@ -17,6 +17,7 @@ import {
 } from './utils';
 import { recalculateAllAttendanceCounts } from './attendance';
 import { autoArchiveWinterLeagueIfNeeded } from './league';
+import { isMemberActiveAtDate } from './members';
 
 
 // --- Stagione Corrente ---
@@ -109,17 +110,27 @@ export const calcolaEArchiviaStagione = async (stagioneTarget: string): Promise<
 
     membersSnap.docs.forEach(docSnap => {
         const memberId = docSnap.id;
+        const memberData = { id: memberId, ...docSnap.data() } as Member;
         const stats = memberPresences[memberId] || { campo: 0, palestra: 0, datesCampo: new Set(), datesPalestra: new Set(), datesAll: new Set() };
         const presenzeCampo = stats.campo;
         const presenzePalestra = stats.palestra;
         const totalPresences = presenzeCampo + presenzePalestra;
 
-        const percentualeCampo = numeroAllenamentiCampo > 0
-            ? Math.round((presenzeCampo / numeroAllenamentiCampo) * 1000) / 10 : 0;
-        const percentualePalestra = numeroAllenamentiPalestra > 0
-            ? Math.round((presenzePalestra / numeroAllenamentiPalestra) * 1000) / 10 : 0;
-        const percentualePresenza = numeroAllenamenti > 0
-            ? Math.round((totalPresences / numeroAllenamenti) * 1000) / 10 : 0;
+        // Calcola allenamenti effettivi in cui il membro era attivo/disponibile
+        const eligibleDatesCampo = trainingDatesCampo.filter(d => isMemberActiveAtDate(memberData, d));
+        const eligibleDatesPalestra = trainingDatesPalestra.filter(d => isMemberActiveAtDate(memberData, d));
+        const eligibleDatesAll = uniqueTrainingDates.filter(d => isMemberActiveAtDate(memberData, d));
+
+        const countEligibleCampo = eligibleDatesCampo.length;
+        const countEligiblePalestra = eligibleDatesPalestra.length;
+        const countEligibleAll = eligibleDatesAll.length;
+
+        const percentualeCampo = countEligibleCampo > 0
+            ? Math.round((presenzeCampo / countEligibleCampo) * 1000) / 10 : 0;
+        const percentualePalestra = countEligiblePalestra > 0
+            ? Math.round((presenzePalestra / countEligiblePalestra) * 1000) / 10 : 0;
+        const percentualePresenza = countEligibleAll > 0
+            ? Math.round((totalPresences / countEligibleAll) * 1000) / 10 : 0;
 
         let streakMassima = 0, currentStreak = 0;
         for (const tDate of uniqueTrainingDates) {

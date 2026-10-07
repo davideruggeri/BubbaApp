@@ -12,12 +12,16 @@ export interface FieldDot {
     c: string; // colore es. '#003057', '#C8323C'
     r?: number;
     label?: string;
+    onPress?: () => void;
+    data?: any;
 }
 
 export interface FieldTrajectory {
     points: { x: number; y: number }[];
     color?: string;
     label?: string;
+    onPress?: () => void;
+    data?: any;
 }
 
 interface InteractiveFieldProps {
@@ -33,6 +37,8 @@ interface InteractiveFieldProps {
     onFieldPress?: (coord: { x: number; y: number }) => void;
     onTrajectoryComplete?: (trajectory: { x: number; y: number }[]) => void;
     onFlipDirection?: () => void;
+    onDotPress?: (dot: FieldDot) => void;
+    onTrajectoryPress?: (trajectory: FieldTrajectory) => void;
 }
 
 // Dimensioni campo e margini per il Fuori Campo (OB)
@@ -54,7 +60,9 @@ export default function InteractiveField({
     drawingColor = '#C8323C',
     onFieldPress,
     onTrajectoryComplete,
-    onFlipDirection
+    onFlipDirection,
+    onDotPress,
+    onTrajectoryPress
 }: InteractiveFieldProps) {
     const grassRef = useRef<View>(null);
     const modalGrassRef = useRef<View>(null);
@@ -539,12 +547,12 @@ export default function InteractiveField({
                                 <Text style={styles.midfieldLabelText}>37.5m</Text>
                             </View>
 
-                            {/* Brick marks (15m da ciascuna meta) */}
-                            <View style={[styles.brickMark, { left: '33.3%' }]}>
+
+                            <View style={[styles.brickMark, { left: '15%' }]}>
                                 <Text style={styles.brickCross}>✕</Text>
                                 <Text style={styles.brickLabel}>BRICK</Text>
                             </View>
-                            <View style={[styles.brickMark, { right: '33.3%' }]}>
+                            <View style={[styles.brickMark, { right: '15%' }]}>
                                 <Text style={styles.brickCross}>✕</Text>
                                 <Text style={styles.brickLabel}>BRICK</Text>
                             </View>
@@ -568,7 +576,7 @@ export default function InteractiveField({
                         width="100%"
                         height="100%"
                         style={[StyleSheet.absoluteFill, { zIndex: 10 }]}
-                        pointerEvents="none"
+                        pointerEvents="box-none"
                     >
                         {allTrajectories.map((tr, tIdx) => {
                             if (!tr.points || tr.points.length < 2) return null;
@@ -577,9 +585,27 @@ export default function InteractiveField({
                             const arrowHead = buildArrowHead(pxPts);
                             const color = tr.color || '#C8323C';
                             const firstPt = pxPts[0];
+                            const isClickable = !!(tr.onPress || onTrajectoryPress);
 
                             return (
-                                <G key={`traj-${tIdx}`}>
+                                <G
+                                    key={`traj-${tIdx}`}
+                                    onPress={isClickable ? () => {
+                                        if (tr.onPress) tr.onPress();
+                                        else if (onTrajectoryPress) onTrajectoryPress(tr);
+                                    } : undefined}
+                                >
+                                    {/* Area di tocco allargata invisibile per facilitare il tap sulla traiettoria */}
+                                    {isClickable && (
+                                        <Path
+                                            d={pathData}
+                                            stroke="transparent"
+                                            strokeWidth={22}
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            fill="none"
+                                        />
+                                    )}
                                     {/* Punto di rilascio iniziale del lancio */}
                                     <Circle
                                         cx={firstPt.x}
@@ -630,10 +656,16 @@ export default function InteractiveField({
                         const topPercent = `${((d.y + MARGIN_Y) / TOTAL_W) * 100}%`;
                         const size = Math.round((d.r || 1) * 16);
                         const ob = isOB(d);
+                        const isClickable = !!(d.onPress || onDotPress);
                         return (
-                            <View
+                            <TouchableOpacity
                                 key={index}
-                                pointerEvents="none"
+                                disabled={!isClickable}
+                                activeOpacity={0.7}
+                                onPress={() => {
+                                    if (d.onPress) d.onPress();
+                                    else if (onDotPress) onDotPress(d);
+                                }}
                                 style={[
                                     styles.dot,
                                     {
@@ -645,21 +677,22 @@ export default function InteractiveField({
                                         width: size,
                                         height: size,
                                         borderRadius: size / 2,
-                                        transform: [{ translateX: -size / 2 }, { translateY: -size / 2 }]
+                                        transform: [{ translateX: -size / 2 }, { translateY: -size / 2 }],
+                                        zIndex: isClickable ? 150 : 10,
                                     }
                                 ]}
                             >
                                 <Text style={styles.dotLabel}>
                                     {d.label || (ob ? 'OB' : '')}
                                 </Text>
-                            </View>
+                            </TouchableOpacity>
                         );
                     })}
 
-                    {/* Layer interattivo di tocco: posizionato come ultimo figlio con zIndex elevato per catturare sempre i click sia in campo che fuori campo */}
-                    {!drawTrajectoryMode && (
+                    {/* Layer interattivo di tocco: posizionato come ultimo figlio solo se in modalità cattura coordinate sul campo */}
+                    {!drawTrajectoryMode && interactive && (
                         <TouchableOpacity
-                            activeOpacity={interactive ? 0.92 : 1}
+                            activeOpacity={0.92}
                             onPress={e => handlePress(e, isModal)}
                             style={[StyleSheet.absoluteFill, { zIndex: 100 }]}
                         />
@@ -670,68 +703,136 @@ export default function InteractiveField({
     };
 
     return (
-            <View
-                style={styles.wrapper}
-                onLayout={(e: LayoutChangeEvent) => {
-                    const w = Math.floor(e.nativeEvent.layout.width);
-                    if (w > 0 && Math.abs(w - wrapperWidth) > 1) {
-                        setWrapperWidth(w);
-                    }
-                }}
-            >
-                <View style={styles.directionHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <Text style={styles.directionText}>
-                            {flip ? `◀ ${secondEnd}` : `▶ ${secondEnd}`}
-                        </Text>
-                        <Text style={styles.dimensionBadge}>75 × 25 m (+OB)</Text>
-                    </View>
-
-                    <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-                        {onFlipDirection && (
-                            <TouchableOpacity style={styles.flipButton} onPress={onFlipDirection} activeOpacity={0.7}>
-                                <Text style={styles.flipButtonText}>⇄ Gira</Text>
-                            </TouchableOpacity>
-                        )}
-                        {enlargeable && (
-                            <TouchableOpacity
-                                style={styles.expandButton}
-                                onPress={() => setIsExpanded(true)}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.expandButtonText}>⛶ Ingrandisci</Text>
-                            </TouchableOpacity>
-                        )}
-                    </View>
+        <View
+            style={styles.wrapper}
+            onLayout={(e: LayoutChangeEvent) => {
+                const w = Math.floor(e.nativeEvent.layout.width);
+                if (w > 0 && Math.abs(w - wrapperWidth) > 1) {
+                    setWrapperWidth(w);
+                }
+            }}
+        >
+            <View style={styles.directionHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={styles.directionText}>
+                        {flip ? `◀ ${secondEnd}` : `▶ ${secondEnd}`}
+                    </Text>
+                    <Text style={styles.dimensionBadge}>75 × 25 m (+OB)</Text>
                 </View>
 
-                {renderFieldContent(false, inlineFieldWidth, inlineFieldHeight)}
+                <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                    {onFlipDirection && (
+                        <TouchableOpacity style={styles.flipButton} onPress={onFlipDirection} activeOpacity={0.7}>
+                            <Text style={styles.flipButtonText}>⇄ Gira</Text>
+                        </TouchableOpacity>
+                    )}
+                    {enlargeable && (
+                        <TouchableOpacity
+                            style={styles.expandButton}
+                            onPress={() => setIsExpanded(true)}
+                            activeOpacity={0.7}
+                        >
+                            <Text style={styles.expandButtonText}>⛶ Ingrandisci</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </View>
 
-                {/* Scala metrica di riferimento (con indicazione Fuori Campo OB) */}
-                {renderRuler(inlineFieldWidth)}
+            {renderFieldContent(false, inlineFieldWidth, inlineFieldHeight)}
 
-                {interactive && lastCoord && (
-                    <View style={styles.coordFeedback}>
-                        <Text style={[styles.coordFeedbackText, isOB(lastCoord) && styles.coordFeedbackOB]}>
-                            Ultimo tocco: X={lastCoord.x}m · Y={lastCoord.y}m {isOB(lastCoord) ? '⚠️ FUORI CAMPO (OB)' : '✓ IN CAMPO'}
-                        </Text>
-                    </View>
-                )}
+            {/* Scala metrica di riferimento (con indicazione Fuori Campo OB) */}
+            {renderRuler(inlineFieldWidth)}
 
-                {/* Modale Vista Ingrandita Campo - Esperienza immersiva a schermo intero ad alta definizione */}
-                {isExpanded && (
-                    <Modal visible={true} animationType="slide" transparent={false} onRequestClose={() => setIsExpanded(false)}>
-                        <SafeAreaView style={styles.modalScreen} edges={['top', 'bottom', 'left', 'right']}>
-                            {/* Header responsivo per telefono e PC */}
-                            {isLandscape ? (
-                                <View style={styles.modalLandscapeHeader}>
+            {interactive && lastCoord && (
+                <View style={styles.coordFeedback}>
+                    <Text style={[styles.coordFeedbackText, isOB(lastCoord) && styles.coordFeedbackOB]}>
+                        Ultimo tocco: X={lastCoord.x}m · Y={lastCoord.y}m {isOB(lastCoord) ? '⚠️ FUORI CAMPO (OB)' : '✓ IN CAMPO'}
+                    </Text>
+                </View>
+            )}
+
+            {/* Modale Vista Ingrandita Campo - Esperienza immersiva a schermo intero ad alta definizione */}
+            {isExpanded && (
+                <Modal visible={true} animationType="slide" transparent={false} onRequestClose={() => setIsExpanded(false)}>
+                    <SafeAreaView style={styles.modalScreen} edges={['top', 'bottom', 'left', 'right']}>
+                        {/* Header responsivo per telefono e PC */}
+                        {isLandscape ? (
+                            <View style={styles.modalLandscapeHeader}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Text style={styles.modalTitle}>
+                                        {isPlayMode ? 'Mappa Tattica' : 'Mappa Pull'}
+                                    </Text>
+                                    <Text style={styles.modalDirectionBadge}>
+                                        {flip ? `◀ ${secondEnd}` : `▶ ${secondEnd}`}
+                                    </Text>
+                                </View>
+
+                                <View style={styles.zoomSegment}>
+                                    <TouchableOpacity
+                                        style={[styles.zoomBtn, modalZoom === 'fit' && styles.zoomBtnActive]}
+                                        onPress={() => setModalZoom('fit')}
+                                    >
+                                        <Text style={[styles.zoomBtnText, modalZoom === 'fit' && styles.zoomBtnTextActive]}>Adatta</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.zoomBtn, modalZoom === '1.5x' && styles.zoomBtnActive]}
+                                        onPress={() => setModalZoom('1.5x')}
+                                    >
+                                        <Text style={[styles.zoomBtnText, modalZoom === '1.5x' && styles.zoomBtnTextActive]}>1.5x</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.zoomBtn, modalZoom === '2.2x' && styles.zoomBtnActive]}
+                                        onPress={() => setModalZoom('2.2x')}
+                                    >
+                                        <Text style={[styles.zoomBtnText, modalZoom === '2.2x' && styles.zoomBtnTextActive]}>2.2x</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    {onFlipDirection && (
+                                        <TouchableOpacity style={styles.modalActionBtn} onPress={onFlipDirection}>
+                                            <Text style={styles.modalActionBtnText}>⇄ Gira</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                    <TouchableOpacity
+                                        style={styles.modalCloseBtn}
+                                        onPress={() => setIsExpanded(false)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={styles.modalCloseBtnText}>✕ Chiudi</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        ) : (
+                            <View style={styles.modalPortraitHeader}>
+                                <View style={styles.modalPortraitRow1}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                                         <Text style={styles.modalTitle}>
                                             {isPlayMode ? 'Mappa Tattica' : 'Mappa Pull'}
                                         </Text>
-                                        <Text style={styles.modalDirectionBadge}>
+                                        <View style={styles.dimensionBadgeDark}>
+                                            <Text style={styles.dimensionBadgeDarkText}>75×25m (+OB)</Text>
+                                        </View>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.modalCloseBtn}
+                                        onPress={() => setIsExpanded(false)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={styles.modalCloseBtnText}>✕ Chiudi</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={styles.modalPortraitRow2}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                        <Text style={styles.modalDirectionText}>
                                             {flip ? `◀ ${secondEnd}` : `▶ ${secondEnd}`}
                                         </Text>
+                                        {onFlipDirection && (
+                                            <TouchableOpacity style={styles.modalActionBtn} onPress={onFlipDirection}>
+                                                <Text style={styles.modalActionBtnText}>⇄ Gira</Text>
+                                            </TouchableOpacity>
+                                        )}
                                     </View>
 
                                     <View style={styles.zoomSegment}>
@@ -739,7 +840,7 @@ export default function InteractiveField({
                                             style={[styles.zoomBtn, modalZoom === 'fit' && styles.zoomBtnActive]}
                                             onPress={() => setModalZoom('fit')}
                                         >
-                                            <Text style={[styles.zoomBtnText, modalZoom === 'fit' && styles.zoomBtnTextActive]}>Adatta</Text>
+                                            <Text style={[styles.zoomBtnText, modalZoom === 'fit' && styles.zoomBtnTextActive]}>📱 Adatta</Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={[styles.zoomBtn, modalZoom === '1.5x' && styles.zoomBtnActive]}
@@ -754,548 +855,480 @@ export default function InteractiveField({
                                             <Text style={[styles.zoomBtnText, modalZoom === '2.2x' && styles.zoomBtnTextActive]}>2.2x</Text>
                                         </TouchableOpacity>
                                     </View>
-
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                        {onFlipDirection && (
-                                            <TouchableOpacity style={styles.modalActionBtn} onPress={onFlipDirection}>
-                                                <Text style={styles.modalActionBtnText}>⇄ Gira</Text>
-                                            </TouchableOpacity>
-                                        )}
-                                        <TouchableOpacity
-                                            style={styles.modalCloseBtn}
-                                            onPress={() => setIsExpanded(false)}
-                                            activeOpacity={0.8}
-                                        >
-                                            <Text style={styles.modalCloseBtnText}>✕ Chiudi</Text>
-                                        </TouchableOpacity>
-                                    </View>
                                 </View>
-                            ) : (
-                                <View style={styles.modalPortraitHeader}>
-                                    <View style={styles.modalPortraitRow1}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                            <Text style={styles.modalTitle}>
-                                                {isPlayMode ? 'Mappa Tattica' : 'Mappa Pull'}
-                                            </Text>
-                                            <View style={styles.dimensionBadgeDark}>
-                                                <Text style={styles.dimensionBadgeDarkText}>75×25m (+OB)</Text>
-                                            </View>
-                                        </View>
-                                        <TouchableOpacity
-                                            style={styles.modalCloseBtn}
-                                            onPress={() => setIsExpanded(false)}
-                                            activeOpacity={0.8}
-                                        >
-                                            <Text style={styles.modalCloseBtnText}>✕ Chiudi</Text>
-                                        </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* Area centrale con campo ingrandito a proporzioni fisse matematiche */}
+                        <View style={styles.modalContentArea}>
+                            {(() => {
+                                const { width: mW, height: mH, scrollable } = getModalDimensions();
+                                const content = (
+                                    <View style={{ width: mW, alignItems: 'center' }}>
+                                        {renderFieldContent(true, mW, mH)}
+                                        {renderRuler(mW)}
                                     </View>
+                                );
 
-                                    <View style={styles.modalPortraitRow2}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                            <Text style={styles.modalDirectionText}>
-                                                {flip ? `◀ ${secondEnd}` : `▶ ${secondEnd}`}
-                                            </Text>
-                                            {onFlipDirection && (
-                                                <TouchableOpacity style={styles.modalActionBtn} onPress={onFlipDirection}>
-                                                    <Text style={styles.modalActionBtnText}>⇄ Gira</Text>
-                                                </TouchableOpacity>
-                                            )}
-                                        </View>
-
-                                        <View style={styles.zoomSegment}>
-                                            <TouchableOpacity
-                                                style={[styles.zoomBtn, modalZoom === 'fit' && styles.zoomBtnActive]}
-                                                onPress={() => setModalZoom('fit')}
-                                            >
-                                                <Text style={[styles.zoomBtnText, modalZoom === 'fit' && styles.zoomBtnTextActive]}>📱 Adatta</Text>
-                                            </TouchableOpacity>
-                                            <TouchableOpacity
-                                                style={[styles.zoomBtn, modalZoom === '1.5x' && styles.zoomBtnActive]}
-                                                onPress={() => setModalZoom('1.5x')}
-                                            >
-                                                <Text style={[styles.zoomBtnText, modalZoom === '1.5x' && styles.zoomBtnTextActive]}>1.5x</Text>
-                                            </TouchableOpacity>
-                                            <TouchableOpacity
-                                                style={[styles.zoomBtn, modalZoom === '2.2x' && styles.zoomBtnActive]}
-                                                onPress={() => setModalZoom('2.2x')}
-                                            >
-                                                <Text style={[styles.zoomBtnText, modalZoom === '2.2x' && styles.zoomBtnTextActive]}>2.2x</Text>
-                                            </TouchableOpacity>
-                                        </View>
-                                    </View>
-                                </View>
-                            )}
-
-                            {/* Area centrale con campo ingrandito a proporzioni fisse matematiche */}
-                            <View style={styles.modalContentArea}>
-                                {(() => {
-                                    const { width: mW, height: mH, scrollable } = getModalDimensions();
-                                    const content = (
-                                        <View style={{ width: mW, alignItems: 'center' }}>
-                                            {renderFieldContent(true, mW, mH)}
-                                            {renderRuler(mW)}
-                                        </View>
-                                    );
-
-                                    if (scrollable) {
-                                        return (
-                                            <ScrollView
-                                                horizontal
-                                                showsHorizontalScrollIndicator={true}
-                                                contentContainerStyle={styles.modalScrollContent}
-                                            >
-                                                {content}
-                                            </ScrollView>
-                                        );
-                                    }
-
+                                if (scrollable) {
                                     return (
-                                        <View style={styles.modalFitContent}>
+                                        <ScrollView
+                                            horizontal
+                                            showsHorizontalScrollIndicator={true}
+                                            contentContainerStyle={styles.modalScrollContent}
+                                        >
                                             {content}
-                                        </View>
+                                        </ScrollView>
                                     );
-                                })()}
-                            </View>
+                                }
 
-                            {/* Footer informativo e chiusura */}
-                            <View style={styles.modalFooter}>
-                                {interactive && lastCoord ? (
-                                    <Text style={[styles.coordFeedbackText, isOB(lastCoord) && styles.coordFeedbackOB]}>
-                                        Ultimo tocco: X={lastCoord.x}m · Y={lastCoord.y}m {isOB(lastCoord) ? '⚠️ FUORI CAMPO (OB)' : '✓ IN CAMPO'}
-                                    </Text>
-                                ) : (
-                                    <Text style={styles.modalHintText} numberOfLines={1}>
-                                        {windowWidth < windowHeight
-                                            ? '💡 Ruota il telefono in orizzontale per sfruttare tutto lo schermo'
-                                            : '💡 Proporzioni reali fisse 87m × 35m (campo 75×25 + margini OB)'}
-                                    </Text>
-                                )}
-                            </View>
-                        </SafeAreaView>
-                    </Modal>
-                )}
-            </View>
-        );
-    }
+                                return (
+                                    <View style={styles.modalFitContent}>
+                                        {content}
+                                    </View>
+                                );
+                            })()}
+                        </View>
 
-    const styles = StyleSheet.create({
-        wrapper: {
-            width: '100%',
-            marginVertical: 6,
-        },
-        directionHeader: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 8,
-            flexWrap: 'wrap',
-            gap: 6,
-        },
-        directionText: {
-            fontSize: 12,
-            fontWeight: 'bold',
-            color: '#003057',
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-        },
-        dimensionBadge: {
-            fontSize: 10,
-            fontWeight: '700',
-            color: '#555',
-            backgroundColor: '#EAEAEA',
-            paddingHorizontal: 7,
-            paddingVertical: 3,
-            borderRadius: 4,
-        },
-        flipButton: {
-            backgroundColor: '#E2E8F0',
-            paddingHorizontal: 10,
-            paddingVertical: 5,
-            borderRadius: 6,
-        },
-        flipButtonText: {
-            fontSize: 11,
-            fontWeight: '600',
-            color: '#1E293B',
-        },
-        expandButton: {
-            backgroundColor: '#003057',
-            paddingHorizontal: 10,
-            paddingVertical: 5,
-            borderRadius: 6,
-        },
-        expandButtonText: {
-            fontSize: 11,
-            fontWeight: 'bold',
-            color: '#fff',
-        },
-        fieldOuter: {
-            backgroundColor: '#D1C2A5', // sabbia esterna (zona fuori campo OB)
-            borderRadius: 10,
-            borderWidth: 2,
-            borderColor: '#0F172A',
-            position: 'relative',
-            overflow: 'hidden',
-            padding: 0,
-        },
-        canvasContainer: {
-            width: '100%',
-            height: '100%',
-            backgroundColor: '#D1C2A5',
-            position: 'relative',
-            borderRadius: 8,
-            overflow: 'hidden',
-        },
-        obBannerTop: {
-            position: 'absolute',
-            top: 1,
-            left: 0,
-            right: 0,
-            alignItems: 'center',
-            zIndex: 1,
-        },
-        obBannerBottom: {
-            position: 'absolute',
-            bottom: 1,
-            left: 0,
-            right: 0,
-            alignItems: 'center',
-            zIndex: 1,
-        },
-        obBannerText: {
-            fontSize: 7,
-            fontWeight: '800',
-            color: '#827156',
-            letterSpacing: 1.2,
-        },
-        obBannerLeft: {
-            position: 'absolute',
-            top: '50%',
-            left: 2,
-            marginTop: -6,
-            zIndex: 1,
-        },
-        obBannerRight: {
-            position: 'absolute',
-            top: '50%',
-            right: 2,
-            marginTop: -6,
-            zIndex: 1,
-        },
-        obBannerSideText: {
-            fontSize: 7,
-            fontWeight: '900',
-            color: '#827156',
-        },
-        playingField: {
-            position: 'absolute',
-            backgroundColor: '#F5ECCF', // sabbia campo regolamentare
-            flexDirection: 'row',
-            borderWidth: 2,
-            borderColor: '#0F172A',
-            borderRadius: 4,
-            overflow: 'hidden',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.15,
-            shadowRadius: 3,
-            elevation: 3,
-        },
-        endZone: {
-            width: `${(FIELD.EZ / FIELD.L) * 100}%`,
-            height: '100%',
-            backgroundColor: '#E6D7B4',
-            justifyContent: 'center',
-            alignItems: 'center',
-            paddingHorizontal: 2,
-        },
-        leftEndZone: {
-            borderRightWidth: 2,
-            borderRightColor: '#0F172A',
-        },
-        rightEndZone: {
-            borderLeftWidth: 2,
-            borderLeftColor: '#0F172A',
-        },
-        endZoneHeader: {
-            alignItems: 'center',
-        },
-        endZoneText: {
-            fontSize: 9,
-            fontWeight: '900',
-            color: 'rgba(30, 41, 59, 0.45)',
-            textAlign: 'center',
-            letterSpacing: 0.5,
-        },
-        endZoneSub: {
-            fontSize: 7,
-            fontWeight: 'bold',
-            color: 'rgba(100, 116, 139, 0.45)',
-            marginTop: 2,
-        },
-        centralField: {
-            flex: 1,
-            height: '100%',
-            position: 'relative',
-            justifyContent: 'center',
-            alignItems: 'center',
-        },
-        midfieldLine: {
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            left: '50%',
-            width: 1.5,
-            backgroundColor: 'rgba(15, 23, 42, 0.35)',
-        },
-        midfieldLabelBadge: {
-            position: 'absolute',
-            top: 3,
-            backgroundColor: 'rgba(255, 255, 255, 0.85)',
-            paddingHorizontal: 4,
-            paddingVertical: 1,
-            borderRadius: 3,
-        },
-        midfieldLabelText: {
-            fontSize: 7,
-            fontWeight: '700',
-            color: '#475569',
-        },
-        brickMark: {
-            position: 'absolute',
-            top: '50%',
-            marginTop: -10,
-            alignItems: 'center',
-        },
-        brickCross: {
-            fontSize: 10,
-            color: 'rgba(200, 50, 60, 0.45)',
-            fontWeight: '900',
-        },
-        brickLabel: {
-            fontSize: 7,
-            fontWeight: 'bold',
-            color: 'rgba(71, 85, 105, 0.45)',
-            marginTop: -2,
-        },
-        fieldNotice: {
-            fontSize: 8,
-            fontWeight: 'bold',
-            color: '#64748B',
-            opacity: 0.35,
-            letterSpacing: 0.8,
-        },
-        dot: {
-            position: 'absolute',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.45,
-            shadowRadius: 3,
-            elevation: 6,
-            zIndex: 10,
-            justifyContent: 'center',
-            alignItems: 'center',
-        },
-        dotLabel: {
-            fontSize: 7,
-            fontWeight: '900',
-            color: '#fff',
-        },
-        rulerContainer: {
-            marginTop: 6,
-            position: 'relative',
-        },
-        rulerTrack: {
-            position: 'relative',
-            height: 18,
-            borderTopWidth: 1,
-            borderTopColor: '#CBD5E1',
-        },
-        rulerMarkWrapper: {
-            position: 'absolute',
-            top: 0,
-            alignItems: 'center',
-            width: 28,
-        },
-        rulerTickLine: {
-            width: 1.5,
-            height: 4,
-            backgroundColor: '#94A3B8',
-            marginBottom: 1,
-        },
-        rulerTickText: {
-            fontSize: 8,
-            fontWeight: '600',
-            color: '#64748B',
-        },
-        footerLabels: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            marginTop: 2,
-            paddingHorizontal: 4,
-        },
-        footerText: {
-            fontSize: 10,
-            color: '#64748B',
-        },
-        coordFeedback: {
-            marginTop: 6,
-            alignItems: 'center',
-        },
-        coordFeedbackText: {
-            fontSize: 11,
-            fontWeight: '600',
-            color: '#003057',
-            backgroundColor: '#E0F2FE',
-            paddingHorizontal: 12,
-            paddingVertical: 3,
-            borderRadius: 12,
-        },
-        coordFeedbackOB: {
-            color: '#DC2626',
-            backgroundColor: '#FEE2E2',
-        },
-        modalScreen: {
-            flex: 1,
-            backgroundColor: '#0F172A', // Slate 900 scuro da console professionale
-            overflow: 'hidden',
-        },
-        modalLandscapeHeader: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            paddingHorizontal: 16,
-            paddingVertical: 6,
-            borderBottomWidth: 1,
-            borderBottomColor: '#1E293B',
-        },
-        modalPortraitHeader: {
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            borderBottomWidth: 1,
-            borderBottomColor: '#1E293B',
-            gap: 6,
-        },
-        modalPortraitRow1: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-        },
-        modalPortraitRow2: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-        },
-        modalTitle: {
-            fontSize: 15,
-            fontWeight: 'bold',
-            color: '#F8FAFC',
-        },
-        modalDirectionBadge: {
-            fontSize: 10,
-            fontWeight: 'bold',
-            color: '#38BDF8',
-            backgroundColor: '#1E293B',
-            paddingHorizontal: 6,
-            paddingVertical: 2,
-            borderRadius: 4,
-            textTransform: 'uppercase',
-        },
-        dimensionBadgeDark: {
-            backgroundColor: '#1E293B',
-            paddingHorizontal: 6,
-            paddingVertical: 2,
-            borderRadius: 4,
-            borderWidth: 1,
-            borderColor: '#334155',
-        },
-        dimensionBadgeDarkText: {
-            fontSize: 9,
-            fontWeight: '700',
-            color: '#94A3B8',
-        },
-        modalCloseBtn: {
-            backgroundColor: '#EF4444',
-            paddingHorizontal: 12,
-            paddingVertical: 5,
-            borderRadius: 6,
-        },
-        modalCloseBtnText: {
-            color: '#FFFFFF',
-            fontWeight: 'bold',
-            fontSize: 12,
-        },
-        modalDirectionText: {
-            fontSize: 11,
-            fontWeight: 'bold',
-            color: '#38BDF8',
-            textTransform: 'uppercase',
-        },
-        modalActionBtn: {
-            backgroundColor: '#1E293B',
-            borderWidth: 1,
-            borderColor: '#334155',
-            paddingHorizontal: 8,
-            paddingVertical: 4,
-            borderRadius: 6,
-        },
-        modalActionBtnText: {
-            fontSize: 11,
-            fontWeight: 'bold',
-            color: '#F8FAFC',
-        },
-        zoomSegment: {
-            flexDirection: 'row',
-            backgroundColor: '#1E293B',
-            borderRadius: 6,
-            padding: 2,
-            borderWidth: 1,
-            borderColor: '#334155',
-        },
-        zoomBtn: {
-            paddingHorizontal: 8,
-            paddingVertical: 4,
-            borderRadius: 4,
-        },
-        zoomBtnActive: {
-            backgroundColor: '#0284C7',
-        },
-        zoomBtnText: {
-            fontSize: 11,
-            fontWeight: '600',
-            color: '#94A3B8',
-        },
-        zoomBtnTextActive: {
-            color: '#FFFFFF',
-            fontWeight: 'bold',
-        },
-        modalContentArea: {
-            flex: 1,
-            justifyContent: 'center',
-            alignItems: 'center',
-            paddingVertical: 4,
-            overflow: 'hidden',
-        },
-        modalScrollContent: {
-            alignItems: 'center',
-            paddingHorizontal: 16,
-        },
-        modalFitContent: {
-            width: '100%',
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingHorizontal: 8,
-        },
-        modalFooter: {
-            paddingHorizontal: 12,
-            paddingVertical: 4,
-            alignItems: 'center',
-        },
-        modalHintText: {
-            fontSize: 10,
-            color: '#94A3B8',
-            textAlign: 'center',
-        },
-    });
+                        {/* Footer informativo e chiusura */}
+                        <View style={styles.modalFooter}>
+                            {interactive && lastCoord ? (
+                                <Text style={[styles.coordFeedbackText, isOB(lastCoord) && styles.coordFeedbackOB]}>
+                                    Ultimo tocco: X={lastCoord.x}m · Y={lastCoord.y}m {isOB(lastCoord) ? '⚠️ FUORI CAMPO (OB)' : '✓ IN CAMPO'}
+                                </Text>
+                            ) : (
+                                <Text style={styles.modalHintText} numberOfLines={1}>
+                                    {windowWidth < windowHeight
+                                        ? '💡 Ruota il telefono in orizzontale per sfruttare tutto lo schermo'
+                                        : '💡 Proporzioni reali fisse 87m × 35m (campo 75×25 + margini OB)'}
+                                </Text>
+                            )}
+                        </View>
+                    </SafeAreaView>
+                </Modal>
+            )}
+        </View>
+    );
+}
+
+const styles = StyleSheet.create({
+    wrapper: {
+        width: '100%',
+        marginVertical: 6,
+    },
+    directionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+        flexWrap: 'wrap',
+        gap: 6,
+    },
+    directionText: {
+        fontSize: 12,
+        fontWeight: 'bold',
+        color: '#003057',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    dimensionBadge: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#555',
+        backgroundColor: '#EAEAEA',
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        borderRadius: 4,
+    },
+    flipButton: {
+        backgroundColor: '#E2E8F0',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 6,
+    },
+    flipButtonText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#1E293B',
+    },
+    expandButton: {
+        backgroundColor: '#003057',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 6,
+    },
+    expandButtonText: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#fff',
+    },
+    fieldOuter: {
+        backgroundColor: '#D1C2A5', // sabbia esterna (zona fuori campo OB)
+        borderRadius: 10,
+        borderWidth: 2,
+        borderColor: '#0F172A',
+        position: 'relative',
+        overflow: 'hidden',
+        padding: 0,
+    },
+    canvasContainer: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#D1C2A5',
+        position: 'relative',
+        borderRadius: 8,
+        overflow: 'hidden',
+    },
+    obBannerTop: {
+        position: 'absolute',
+        top: 1,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 1,
+    },
+    obBannerBottom: {
+        position: 'absolute',
+        bottom: 1,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 1,
+    },
+    obBannerText: {
+        fontSize: 7,
+        fontWeight: '800',
+        color: '#827156',
+        letterSpacing: 1.2,
+    },
+    obBannerLeft: {
+        position: 'absolute',
+        top: '50%',
+        left: 2,
+        marginTop: -6,
+        zIndex: 1,
+    },
+    obBannerRight: {
+        position: 'absolute',
+        top: '50%',
+        right: 2,
+        marginTop: -6,
+        zIndex: 1,
+    },
+    obBannerSideText: {
+        fontSize: 7,
+        fontWeight: '900',
+        color: '#827156',
+    },
+    playingField: {
+        position: 'absolute',
+        backgroundColor: '#F5ECCF', // sabbia campo regolamentare
+        flexDirection: 'row',
+        borderWidth: 2,
+        borderColor: '#0F172A',
+        borderRadius: 4,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+    endZone: {
+        width: `${(FIELD.EZ / FIELD.L) * 100}%`,
+        height: '100%',
+        backgroundColor: '#E6D7B4',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 2,
+    },
+    leftEndZone: {
+        borderRightWidth: 2,
+        borderRightColor: '#0F172A',
+    },
+    rightEndZone: {
+        borderLeftWidth: 2,
+        borderLeftColor: '#0F172A',
+    },
+    endZoneHeader: {
+        alignItems: 'center',
+    },
+    endZoneText: {
+        fontSize: 9,
+        fontWeight: '900',
+        color: 'rgba(30, 41, 59, 0.45)',
+        textAlign: 'center',
+        letterSpacing: 0.5,
+    },
+    endZoneSub: {
+        fontSize: 7,
+        fontWeight: 'bold',
+        color: 'rgba(100, 116, 139, 0.45)',
+        marginTop: 2,
+    },
+    centralField: {
+        flex: 1,
+        height: '100%',
+        position: 'relative',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    midfieldLine: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        left: '50%',
+        width: 1.5,
+        backgroundColor: 'rgba(15, 23, 42, 0.35)',
+    },
+    midfieldLabelBadge: {
+        position: 'absolute',
+        top: 3,
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+        paddingHorizontal: 4,
+        paddingVertical: 1,
+        borderRadius: 3,
+    },
+    midfieldLabelText: {
+        fontSize: 7,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    brickMark: {
+        position: 'absolute',
+        top: '50%',
+        marginTop: -10,
+        alignItems: 'center',
+    },
+    brickCross: {
+        fontSize: 10,
+        color: 'rgba(200, 50, 60, 0.45)',
+        fontWeight: '900',
+    },
+    brickLabel: {
+        fontSize: 7,
+        fontWeight: 'bold',
+        color: 'rgba(71, 85, 105, 0.45)',
+        marginTop: -2,
+    },
+    fieldNotice: {
+        fontSize: 8,
+        fontWeight: 'bold',
+        color: '#64748B',
+        opacity: 0.35,
+        letterSpacing: 0.8,
+    },
+    dot: {
+        position: 'absolute',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.45,
+        shadowRadius: 3,
+        elevation: 6,
+        zIndex: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    dotLabel: {
+        fontSize: 7,
+        fontWeight: '900',
+        color: '#fff',
+    },
+    rulerContainer: {
+        marginTop: 6,
+        position: 'relative',
+    },
+    rulerTrack: {
+        position: 'relative',
+        height: 18,
+        borderTopWidth: 1,
+        borderTopColor: '#CBD5E1',
+    },
+    rulerMarkWrapper: {
+        position: 'absolute',
+        top: 0,
+        alignItems: 'center',
+        width: 28,
+    },
+    rulerTickLine: {
+        width: 1.5,
+        height: 4,
+        backgroundColor: '#94A3B8',
+        marginBottom: 1,
+    },
+    rulerTickText: {
+        fontSize: 8,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    footerLabels: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 2,
+        paddingHorizontal: 4,
+    },
+    footerText: {
+        fontSize: 10,
+        color: '#64748B',
+    },
+    coordFeedback: {
+        marginTop: 6,
+        alignItems: 'center',
+    },
+    coordFeedbackText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#003057',
+        backgroundColor: '#E0F2FE',
+        paddingHorizontal: 12,
+        paddingVertical: 3,
+        borderRadius: 12,
+    },
+    coordFeedbackOB: {
+        color: '#DC2626',
+        backgroundColor: '#FEE2E2',
+    },
+    modalScreen: {
+        flex: 1,
+        backgroundColor: '#0F172A', // Slate 900 scuro da console professionale
+        overflow: 'hidden',
+    },
+    modalLandscapeHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: '#1E293B',
+    },
+    modalPortraitHeader: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: '#1E293B',
+        gap: 6,
+    },
+    modalPortraitRow1: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    modalPortraitRow2: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    modalTitle: {
+        fontSize: 15,
+        fontWeight: 'bold',
+        color: '#F8FAFC',
+    },
+    modalDirectionBadge: {
+        fontSize: 10,
+        fontWeight: 'bold',
+        color: '#38BDF8',
+        backgroundColor: '#1E293B',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        textTransform: 'uppercase',
+    },
+    dimensionBadgeDark: {
+        backgroundColor: '#1E293B',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: '#334155',
+    },
+    dimensionBadgeDarkText: {
+        fontSize: 9,
+        fontWeight: '700',
+        color: '#94A3B8',
+    },
+    modalCloseBtn: {
+        backgroundColor: '#EF4444',
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 6,
+    },
+    modalCloseBtnText: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
+        fontSize: 12,
+    },
+    modalDirectionText: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#38BDF8',
+        textTransform: 'uppercase',
+    },
+    modalActionBtn: {
+        backgroundColor: '#1E293B',
+        borderWidth: 1,
+        borderColor: '#334155',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+    },
+    modalActionBtnText: {
+        fontSize: 11,
+        fontWeight: 'bold',
+        color: '#F8FAFC',
+    },
+    zoomSegment: {
+        flexDirection: 'row',
+        backgroundColor: '#1E293B',
+        borderRadius: 6,
+        padding: 2,
+        borderWidth: 1,
+        borderColor: '#334155',
+    },
+    zoomBtn: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 4,
+    },
+    zoomBtnActive: {
+        backgroundColor: '#0284C7',
+    },
+    zoomBtnText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#94A3B8',
+    },
+    zoomBtnTextActive: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
+    },
+    modalContentArea: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 4,
+        overflow: 'hidden',
+    },
+    modalScrollContent: {
+        alignItems: 'center',
+        paddingHorizontal: 16,
+    },
+    modalFitContent: {
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 8,
+    },
+    modalFooter: {
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        alignItems: 'center',
+    },
+    modalHintText: {
+        fontSize: 10,
+        color: '#94A3B8',
+        textAlign: 'center',
+    },
+});
 
 

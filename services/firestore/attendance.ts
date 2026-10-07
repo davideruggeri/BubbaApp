@@ -217,7 +217,8 @@ export const getTrainingStats = async (startDate: string = '2025-08-25', type: '
 };
 
 export const calculateMemberStreaks = async (memberId: string, season?: string): Promise<MemberStreaks> => {
-    const targetSeason = season || getCachedStagioneCorrente();
+    const isAllSeasons = !season || season === 'all';
+    const targetSeason = isAllSeasons ? null : season;
     const today = new Date().toISOString().split('T')[0];
 
     const calSnap = await getDocs(collection(db, 'calendario'));
@@ -228,9 +229,9 @@ export const calculateMemberStreaks = async (memberId: string, season?: string):
         const date = (data.date || d.id).split('T')[0];
         const docSeason = data.stagione || getStagioneFromDate(date);
 
-        if (docSeason === targetSeason && date <= today) {
+        if ((!targetSeason || docSeason === targetSeason) && date <= today) {
             const eventType = data.type || 'training';
-            if (eventType === 'Campo' || eventType === 'Palestra' || eventType === 'training') {
+            if (eventType === 'Campo' || eventType === 'Palestra' || eventType === 'training' || !data.type) {
                 trainings.push({ date, type: eventType === 'Palestra' ? 'Palestra' : 'Campo' });
             }
         }
@@ -275,6 +276,47 @@ export const calculateMemberStreaks = async (memberId: string, season?: string):
     for (const t of revTrainings) {
         if (attendedDates.has(t.date)) currentStreak++;
         else break;
+    }
+
+    // Controlla anche lo storico archiviato in presenze_history per includere record di stagioni passate
+    try {
+        const historySnap = await getDocs(collection(db, 'presenze_history'));
+        historySnap.docs.forEach(hDoc => {
+            const hData = hDoc.data();
+            const memberStats = hData.perMembro?.[memberId];
+            if (memberStats) {
+                if (memberStats.streakMassima && memberStats.streakMassima > streakMassima) {
+                    streakMassima = memberStats.streakMassima;
+                }
+                if (memberStats.streakCampo && memberStats.streakCampo > streakCampo) {
+                    streakCampo = memberStats.streakCampo;
+                }
+                if (memberStats.streakPalestra && memberStats.streakPalestra > streakPalestra) {
+                    streakPalestra = memberStats.streakPalestra;
+                }
+            }
+        });
+    } catch (e) {
+        console.warn("Errore lettura presenze_history in calculateMemberStreaks:", e);
+    }
+
+    // Controlla anche il record salvato direttamente sul membro in indirizzario
+    try {
+        const memberDoc = await getDoc(doc(db, 'indirizzario', memberId));
+        if (memberDoc.exists()) {
+            const mData = memberDoc.data();
+            if (mData.streakMassima && mData.streakMassima > streakMassima) {
+                streakMassima = mData.streakMassima;
+            }
+            if (mData.streakCampo && mData.streakCampo > streakCampo) {
+                streakCampo = mData.streakCampo;
+            }
+            if (mData.streakPalestra && mData.streakPalestra > streakPalestra) {
+                streakPalestra = mData.streakPalestra;
+            }
+        }
+    } catch (e) {
+        console.warn("Errore lettura indirizzario per streak record:", e);
     }
 
     return { currentStreak, streakMassima, streakCampo, streakPalestra };
@@ -368,10 +410,22 @@ export const recalculateAllAttendanceCounts = async (season?: string) => {
                 else break;
             }
 
+            const existingData = docSnap.data();
+            const prevStreakMassima = existingData?.streakMassima || 0;
+            const prevStreakCampo = existingData?.streakCampo || 0;
+            const prevStreakPalestra = existingData?.streakPalestra || 0;
+
+            const finalStreakMassima = Math.max(streakMassima, prevStreakMassima);
+            const finalStreakCampo = Math.max(streakCampo, prevStreakCampo);
+            const finalStreakPalestra = Math.max(streakPalestra, prevStreakPalestra);
+
             batch.update(docSnap.ref, {
                 attendanceCount: memberCounts.campo,
                 attendanceCountGym: memberCounts.palestra,
-                currentStreak, streakMassima, streakCampo, streakPalestra
+                currentStreak,
+                streakMassima: finalStreakMassima,
+                streakCampo: finalStreakCampo,
+                streakPalestra: finalStreakPalestra
             });
 
             opCount++;

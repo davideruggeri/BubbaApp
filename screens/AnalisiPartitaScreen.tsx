@@ -112,6 +112,9 @@ export default function AnalisiPartitaScreen() {
     const [playerMappings, setPlayerMappings] = useState<Record<string, string>>({});
     const [pendingImportData, setPendingImportData] = useState<{ content: any; isJson: boolean } | null>(null);
 
+    // Export Tournament Modal State
+    const [exportTournamentModalVisible, setExportTournamentModalVisible] = useState(false);
+
     // Filtro esclusivo su Tornei e Campionati a calendario (deduplicati per titolo e ordinati cronologicamente)
     const tournamentEvents = useMemo(() => {
         const filtered = eventsList.filter((ev: Event) => {
@@ -502,16 +505,25 @@ export default function AnalisiPartitaScreen() {
     };
 
     const handleExportTournamentXLSX = async () => {
-        try {
-            if (!matches.length) {
-                showAlert("Nessuna partita", "Non ci sono partite da esportare per la stagione corrente.");
-                return;
-            }
-            await exportAndDownloadXLSX(matches, playerMap);
-            showAlert("Esportazione completata", "Il foglio Excel del torneo è stato scaricato.");
-        } catch (error: any) {
-            showAlert("Errore Esportazione", error?.message || "Impossibile esportare l'Excel.");
+        const tournamentGroups = groupedMatches.filter(g => !g.isSingleGroup && g.matches.length > 0);
+
+        if (!tournamentGroups.length) {
+            showAlert("Nessun torneo", "Non ci sono partite di torneo registrate per la stagione corrente.");
+            return;
         }
+
+        if (tournamentGroups.length === 1) {
+            try {
+                await exportAndDownloadXLSX(tournamentGroups[0].matches, playerMap);
+                showAlert("Esportazione completata", `Il foglio Excel di "${tournamentGroups[0].title}" è stato scaricato.`);
+            } catch (error: any) {
+                showAlert("Errore Esportazione", error?.message || "Impossibile esportare l'Excel.");
+            }
+            return;
+        }
+
+        // Se sono presenti più tornei, apri il modale per consentire la selezione
+        setExportTournamentModalVisible(true);
     };
 
     const handleExportSingleMatchXLSX = async (match: MatchAnalysis) => {
@@ -1567,6 +1579,116 @@ export default function AnalisiPartitaScreen() {
                                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>Conferma e Salva</Text>
                             </TouchableOpacity>
                         </View>
+                    </View>
+                </View>
+            </Modal>
+            {/* Modal Selezione Torneo per Esportazione Excel */}
+            <Modal
+                visible={exportTournamentModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setExportTournamentModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { backgroundColor: theme.colors.card, maxWidth: 440 }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <Text style={[styles.modalTitle, { color: theme.colors.text, fontSize: 18 }]}>
+                                📊 Esporta Excel Torneo
+                            </Text>
+                            <TouchableOpacity onPress={() => setExportTournamentModalVisible(false)} style={{ padding: 4 }}>
+                                <Text style={{ fontSize: 14, color: theme.colors.textSecondary, fontWeight: 'bold' }}>✕</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={{ fontSize: 13, color: theme.colors.textSecondary, marginBottom: 14 }}>
+                            Seleziona quale torneo desideri esportare in foglio Excel:
+                        </Text>
+
+                        <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+                            <View style={{ gap: 8 }}>
+                                {groupedMatches
+                                    .filter(g => !g.isSingleGroup && g.matches.length > 0)
+                                    .map(tGroup => (
+                                        <TouchableOpacity
+                                            key={tGroup.id}
+                                            style={{
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                padding: 12,
+                                                borderRadius: 10,
+                                                borderWidth: 1,
+                                                borderColor: theme.colors.border,
+                                                backgroundColor: theme.dark ? '#1E293B' : '#F8FAFC'
+                                            }}
+                                            onPress={async () => {
+                                                setExportTournamentModalVisible(false);
+                                                try {
+                                                    await exportAndDownloadXLSX(tGroup.matches, playerMap);
+                                                    showAlert("Esportazione completata", `Il foglio Excel di "${tGroup.title}" è stato scaricato.`);
+                                                } catch (error: any) {
+                                                    showAlert("Errore Esportazione", error?.message || "Impossibile esportare l'Excel.");
+                                                }
+                                            }}
+                                        >
+                                            <Text style={{ fontSize: 24, marginRight: 10 }}>🏆</Text>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={{ fontSize: 14, fontWeight: 'bold', color: theme.colors.text }}>
+                                                    {tGroup.title}
+                                                </Text>
+                                                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }}>
+                                                    {tGroup.matches.length} {tGroup.matches.length === 1 ? 'partita' : 'partite'}{tGroup.dateRange ? ` • ${tGroup.dateRange}` : ''}
+                                                </Text>
+                                            </View>
+                                            <View style={{ backgroundColor: '#2E8540', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 }}>
+                                                <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>Scarica ➔</Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                    ))}
+
+                                {/* Opzione: Tutti i tornei combinati */}
+                                <TouchableOpacity
+                                    style={{
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        padding: 12,
+                                        borderRadius: 10,
+                                        borderWidth: 1.5,
+                                        borderColor: '#2E8540',
+                                        backgroundColor: theme.dark ? '#1B382B' : '#E8F5E9',
+                                        marginTop: 4
+                                    }}
+                                    onPress={async () => {
+                                        setExportTournamentModalVisible(false);
+                                        try {
+                                            const tournamentMatches = matches.filter(m => !m.isSingleMatch);
+                                            await exportAndDownloadXLSX(tournamentMatches, playerMap);
+                                            showAlert("Esportazione completata", "Il foglio Excel di tutti i tornei combinati è stato scaricato.");
+                                        } catch (error: any) {
+                                            showAlert("Errore Esportazione", error?.message || "Impossibile esportare l'Excel.");
+                                        }
+                                    }}
+                                >
+                                    <Text style={{ fontSize: 24, marginRight: 10 }}>🌐</Text>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={{ fontSize: 14, fontWeight: 'bold', color: theme.colors.text }}>
+                                            Tutti i Tornei Combinati
+                                        </Text>
+                                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }}>
+                                            Esporta tutte le {matches.filter(m => !m.isSingleMatch).length} partite di tutti i tornei
+                                        </Text>
+                                    </View>
+                                    <View style={{ backgroundColor: '#2E8540', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 }}>
+                                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>Tutti ➔</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                        </ScrollView>
+
+                        <TouchableOpacity
+                            style={[styles.modalBtn, { borderColor: theme.colors.border, borderWidth: 1, marginTop: 14 }]}
+                            onPress={() => setExportTournamentModalVisible(false)}
+                        >
+                            <Text style={{ color: theme.colors.text }}>Annulla</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
             </Modal>

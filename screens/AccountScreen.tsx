@@ -25,6 +25,8 @@ import {
     calculateMemberStreaks,
     MemberStreaks
 } from '../services/firestore';
+import { calculateMemberBadges, UserBadgeProgress } from '../services/firestore/badges';
+import BadgesSection from '../components/BadgesSection';
 
 export default function AccountScreen() {
     const navigation = useNavigation();
@@ -72,6 +74,8 @@ export default function AccountScreen() {
     const [myTournamentsCollapsed, setMyTournamentsCollapsed] = useState(false);
     const [pastTournamentsCollapsed, setPastTournamentsCollapsed] = useState(true);
     const [memberStreaks, setMemberStreaks] = useState<MemberStreaks | null>(null);
+    const [badges, setBadges] = useState<UserBadgeProgress[]>([]);
+    const [badgesLoading, setBadgesLoading] = useState(false);
 
     // Password Change State
     const [passwordModalVisible, setPasswordModalVisible] = useState(false);
@@ -99,7 +103,22 @@ export default function AccountScreen() {
                 userProfile.memberId,
                 stagioneCorrente,
                 (tournaments) => {
-                    setMyTournaments(tournaments);
+                    const today = new Date().toISOString().split('T')[0];
+                    const isFriendly = (t: MemberTournament) => {
+                        const lowType = (t.type || '').toLowerCase().trim();
+                        const lowTitle = (t.title || '').toLowerCase().trim();
+                        return lowType === 'match' || lowType === 'amichevole' || lowTitle.includes('amichevol');
+                    };
+                    const isTournamentOrChampionship = (t: MemberTournament) => {
+                        if (isFriendly(t)) return false;
+                        const low = (t.type || '').toLowerCase().trim();
+                        return low.includes('tourn') || low.includes('torn') || low.includes('champ') || low.includes('camp');
+                    };
+                    const filtered = tournaments.filter(t => {
+                        const isPast = t.date && t.date <= today;
+                        return isPast && isTournamentOrChampionship(t);
+                    });
+                    setMyTournaments(filtered);
                 }
             );
 
@@ -107,9 +126,17 @@ export default function AccountScreen() {
             calculateMemberStreaks(userProfile.memberId, stagioneCorrente)
                 .then(streaks => setMemberStreaks(streaks))
                 .catch(err => console.error("Error loading member streaks:", err));
+
+            // Fetch member badges
+            setBadgesLoading(true);
+            calculateMemberBadges(userProfile.memberId)
+                .then(res => setBadges(res))
+                .catch(err => console.error("Error loading member badges:", err))
+                .finally(() => setBadgesLoading(false));
         } else {
             setMyTournaments([]);
             setMemberStreaks(null);
+            setBadges([]);
         }
 
         return () => {
@@ -385,6 +412,10 @@ export default function AccountScreen() {
 
                 </View>
 
+                {/* Badges & Gamification Section */}
+                {userProfile?.memberId && (
+                    <BadgesSection badges={badges} loading={badgesLoading} />
+                )}
 
                 {/* My Tournaments Section */}
                 {userProfile?.memberId && myTournaments.length > 0 && (
@@ -407,7 +438,14 @@ export default function AccountScreen() {
 
                         {!myTournamentsCollapsed && myTournaments.map(tournament => (
                             <View key={`${tournament.id}_${tournament.date}_${tournament.rosterId || ''}`} style={{ marginBottom: 15, width: '100%', borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingBottom: 10 }}>
-                                <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.colors.text }}>{tournament.title}</Text>
+                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 17, fontWeight: 'bold', color: theme.colors.text, flex: 1 }}>{tournament.title}</Text>
+                                    <View style={{ backgroundColor: theme.colors.primary + '18', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginLeft: 8 }}>
+                                        <Text style={{ fontSize: 11, color: theme.colors.primary, fontWeight: 'bold' }}>
+                                            {(tournament.type?.toLowerCase().includes('champ') || tournament.type?.toLowerCase().includes('camp')) ? '🏆 Campionato' : '🥇 Torneo'}
+                                        </Text>
+                                    </View>
+                                </View>
                                 <Text style={{ color: theme.colors.textSecondary }}>
                                     {tournament.location ? `${tournament.location} - ` : ''}{formatTournamentDate(tournament.date)}{tournament.endDate ? ` - ${formatTournamentDate(tournament.endDate)}` : ''}
                                 </Text>
@@ -444,8 +482,8 @@ export default function AccountScreen() {
                 </TouchableOpacity>
 
                 {/* App Version Footer - Easter Egg */}
-                <TouchableOpacity 
-                    activeOpacity={1} 
+                <TouchableOpacity
+                    activeOpacity={1}
                     style={{ marginTop: 30, alignItems: 'center', padding: 10 }}
                     onPress={() => {
                         const newCount = versionTaps + 1;

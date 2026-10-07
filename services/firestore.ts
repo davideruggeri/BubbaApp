@@ -26,3 +26,4 @@ export * from './firestore/matchAnalysis';
 export * from './firestore/season';
 export * from './firestore/world';
 export * from './firestore/settings';
+export * from './firestore/badges';

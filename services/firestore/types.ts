@@ -1,6 +1,13 @@
 // services/firestore/types.ts
 // Tutti i tipi e interfacce condivisi dell'app
 
+export type InactivityPeriod = {
+    id: string;
+    startDate: string; // YYYY-MM-DD
+    endDate?: string | null; // YYYY-MM-DD or null if ongoing
+    reason?: string; // Motivo (es. Infortunio, Studio, Lavoro, Pausa)
+};
+
 export type Member = {
     id: string;
     firstName: string;
@@ -11,6 +18,7 @@ export type Member = {
     attendanceCount: number;
     attendanceCountGym?: number; // New field for gym attendance
     inactiveSince?: string | null; // YYYY-MM-DD if inactive, null/undefined if active
+    inactivityPeriods?: InactivityPeriod[]; // Storico periodi di inattività/pausa
     jerseyNumber?: string;
     currentStreak?: number;
     streakMassima?: number;
