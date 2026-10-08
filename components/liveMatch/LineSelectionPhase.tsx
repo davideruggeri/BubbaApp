@@ -158,7 +158,14 @@ export default function LineSelectionPhase({
                                     styles.pbtn,
                                     isMobile ? styles.pbtnMobile : styles.pbtnDesktop,
                                     isSel && styles.pbtnSel,
-                                    { backgroundColor: isSel ? '#E3ECF5' : theme.colors.card, borderColor: isSel ? '#003057' : theme.colors.border }
+                                    {
+                                        backgroundColor: isSel
+                                            ? (theme.dark ? '#1E3A5F' : '#E3ECF5')
+                                            : theme.colors.card,
+                                        borderColor: isSel
+                                            ? (theme.dark ? '#38BDF8' : '#003057')
+                                            : theme.colors.border,
+                                    }
                                 ]}
                                 onPress={() => {
                                     if (!canEdit) return;
@@ -166,14 +173,27 @@ export default function LineSelectionPhase({
                                 }}
                             >
                                 <View style={{ paddingRight: 24, flex: 1 }}>
-                                    <Text style={[styles.pbtnName, { color: theme.colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+                                    <Text
+                                        style={[
+                                            styles.pbtnName,
+                                            { color: isSel && !theme.dark ? '#003057' : theme.colors.text }
+                                        ]}
+                                        numberOfLines={1}
+                                        ellipsizeMode="tail"
+                                    >
                                         {p.name}
                                     </Text>
                                 </View>
                                 <View style={[styles.genderBadge, { backgroundColor: p.g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
                                     <Text style={styles.genderText}>{p.g}</Text>
                                 </View>
-                                <Text style={styles.pbtnSub} numberOfLines={1}>
+                                <Text
+                                    style={[
+                                        styles.pbtnSub,
+                                        { color: isSel ? (theme.dark ? '#93C5FD' : '#003057') : (theme.dark ? '#94A3B8' : '#777') }
+                                    ]}
+                                    numberOfLines={1}
+                                >
                                     {ps.pts} pt ({ps.ptsO}O / {ps.ptsD}D)
                                 </Text>
                             </TouchableOpacity>

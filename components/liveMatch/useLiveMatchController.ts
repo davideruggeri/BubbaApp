@@ -188,7 +188,7 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
                     let dotX = e.x;
                     let dotY = e.y;
                     if (e.trajectory && e.trajectory.length >= 2) {
-                        if (e.k === 'tt') {
+                        if (e.k === 'tt' || e.k === 'err') {
                             dotX = e.trajectory[0].x;
                             dotY = e.trajectory[0].y;
                         } else if (e.k === 'td') {
@@ -331,6 +331,283 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
             showAlert('Successo', 'Posizione del pull aggiornata.');
         } catch {
             showAlert('Errore', 'Impossibile aggiornare la posizione del pull.');
+        }
+    };
+
+    const handleUpdateTurnoverEvent = async (
+        eventIndex: number,
+        updatedFields: {
+            k?: 'tt' | 'td' | 'ts' | 'tx' | 'd' | 'err' | 'call';
+            p?: string | null;
+            x?: number | null;
+            y?: number | null;
+            trajectory?: { x: number; y: number }[];
+        }
+    ) => {
+        if (!isStaff) {
+            showAlert('Permesso negato', 'Solo lo staff può modificare gli eventi.');
+            return;
+        }
+        if (isCompleted) {
+            showAlert('Partita Terminata', "Tocca prima 'Riapri' in alto per poter modificare le azioni della partita.");
+            return;
+        }
+        if (!match.events || eventIndex < 0 || eventIndex >= match.events.length) {
+            showAlert('Errore', 'Evento non trovato.');
+            return;
+        }
+
+        const currentEvents = [...match.events];
+        const oldEv = currentEvents[eventIndex];
+        currentEvents[eventIndex] = {
+            ...oldEv,
+            ...updatedFields,
+            x: updatedFields.x != null ? Math.round(updatedFields.x * 10) / 10 : oldEv.x,
+            y: updatedFields.y != null ? Math.round(updatedFields.y * 10) / 10 : oldEv.y,
+        };
+
+        const newDerive = derive({ pullFirst: match.pullFirst, events: currentEvents });
+        const updatedMatch: Partial<MatchAnalysis> & { id: string } = {
+            id: match.id,
+            events: currentEvents,
+            ourScore: newDerive.score.us,
+            theirScore: newDerive.score.them,
+        };
+
+        try {
+            await updateMatchAnalysis(updatedMatch);
+            showAlert('Successo', 'Evento aggiornato con successo.');
+        } catch {
+            showAlert('Errore', "Impossibile aggiornare l'evento.");
+        }
+    };
+
+    const handleUpdateGoalEvent = async (
+        eventIndex: number,
+        updated: { s?: string | null; a?: string | null }
+    ) => {
+        if (!isStaff) {
+            showAlert('Permesso negato', 'Solo lo staff può modificare gli eventi.');
+            return;
+        }
+        if (isCompleted) {
+            showAlert('Partita Terminata', "Tocca prima 'Riapri' in alto per poter modificare le azioni della partita.");
+            return;
+        }
+        if (!match.events || eventIndex < 0 || eventIndex >= match.events.length) {
+            showAlert('Errore', 'Evento gol non trovato.');
+            return;
+        }
+
+        const currentEvents = [...match.events];
+        const oldEv = currentEvents[eventIndex];
+        const oldS = oldEv.s;
+        const oldA = oldEv.a;
+        const newS = updated.s !== undefined ? updated.s : oldS;
+        const newA = updated.a !== undefined ? updated.a : oldA;
+
+        // 1. Aggiorna l'evento gol
+        currentEvents[eventIndex] = {
+            ...oldEv,
+            s: newS || undefined,
+            a: newA || null,
+        };
+
+        // 2. Sincronizza i tocchi per chi ha effettuato l'assist (il passaggio della meta è un tocco del disco)
+        let targetTouchIndex = -1;
+        for (let j = eventIndex - 1; j >= 0; j--) {
+            const ev = currentEvents[j];
+            if (ev.k === 'goal' || ev.k === 'call' || ev.k === 'tg' || ev.k === 'start' || ev.k === 'halftime') {
+                break;
+            }
+            if (ev.k === 'touch') {
+                if (oldA && ev.p === oldA) {
+                    targetTouchIndex = j;
+                    break;
+                }
+                if (targetTouchIndex === -1) {
+                    targetTouchIndex = j;
+                }
+            }
+        }
+
+        if (oldA !== newA) {
+            if (targetTouchIndex !== -1 && oldA && currentEvents[targetTouchIndex].p === oldA) {
+                if (newA) {
+                    currentEvents[targetTouchIndex] = {
+                        ...currentEvents[targetTouchIndex],
+                        p: newA,
+                    };
+                } else {
+                    currentEvents.splice(targetTouchIndex, 1);
+                }
+            } else if (newA) {
+                currentEvents.splice(eventIndex, 0, {
+                    k: 'touch',
+                    p: newA,
+                    t: oldEv.t,
+                });
+            }
+        }
+
+        // 3. Sincronizza manualTouches se presente
+        let updatedManualTouches = match.manualTouches ? { ...match.manualTouches } : undefined;
+        if (updatedManualTouches) {
+            if (oldS && updatedManualTouches[oldS] != null && oldS !== newS) {
+                updatedManualTouches[oldS] = Math.max(0, updatedManualTouches[oldS] - 1);
+            }
+            if (newS && oldS !== newS) {
+                updatedManualTouches[newS] = (updatedManualTouches[newS] || 0) + 1;
+            }
+            if (oldA && updatedManualTouches[oldA] != null && oldA !== newA) {
+                updatedManualTouches[oldA] = Math.max(0, updatedManualTouches[oldA] - 1);
+            }
+            if (newA && oldA !== newA) {
+                updatedManualTouches[newA] = (updatedManualTouches[newA] || 0) + 1;
+            }
+        }
+
+        const newDerive = derive({ pullFirst: match.pullFirst, events: currentEvents });
+        const updatedMatch: Partial<MatchAnalysis> & { id: string } = {
+            id: match.id,
+            events: currentEvents,
+            ourScore: newDerive.score.us,
+            theirScore: newDerive.score.them,
+            ...(updatedManualTouches ? { manualTouches: updatedManualTouches } : {}),
+        };
+
+        try {
+            await updateMatchAnalysis(updatedMatch);
+            showAlert('Successo', 'Gol e assist aggiornati con ricalcolo dei tocchi.');
+        } catch {
+            showAlert('Errore', "Impossibile aggiornare il gol.");
+        }
+    };
+
+    const handleUpdatePointLine = async (pointNumber: number, oldPlayerId: string, newPlayerId: string) => {
+        if (!canEdit || !match || !match.id) {
+            showAlert('Errore', 'Non hai i permessi per modificare questa partita.');
+            return;
+        }
+        if (!match.events || match.events.length === 0) {
+            showAlert('Errore', 'Nessun evento registrato nella partita.');
+            return;
+        }
+        if (oldPlayerId === newPlayerId) return;
+
+        const currentEvents = [...match.events];
+
+        // Troviamo l'intervallo degli eventi per questa meta
+        let ptCount = 0;
+        let startEventIdx = -1;
+        let endEventIdx = -1;
+
+        for (let i = 0; i < currentEvents.length; i++) {
+            if (currentEvents[i].k === 'start') {
+                ptCount++;
+                if (ptCount === pointNumber) {
+                    startEventIdx = i;
+                } else if (startEventIdx !== -1) {
+                    endEventIdx = i;
+                    break;
+                }
+            }
+        }
+
+        if (startEventIdx === -1) {
+            showAlert('Errore', `Meta #${pointNumber} non trovata.`);
+            return;
+        }
+        if (endEventIdx === -1) {
+            endEventIdx = currentEvents.length;
+        }
+
+        let oldTouchesCount = 0;
+
+        // Sostituiamo oldPlayerId con newPlayerId in tutti gli eventi di questa meta
+        for (let i = startEventIdx; i < endEventIdx; i++) {
+            const ev = { ...currentEvents[i] };
+            let modified = false;
+
+            // Linea (start o line)
+            if (ev.line && Array.isArray(ev.line) && ev.line.includes(oldPlayerId)) {
+                ev.line = ev.line.map(id => (id === oldPlayerId ? newPlayerId : id));
+                modified = true;
+            }
+
+            // Pull
+            if (ev.k === 'pull' && ev.p === oldPlayerId) {
+                ev.p = newPlayerId;
+                modified = true;
+            }
+
+            // Goal (marcatore o assist)
+            if (ev.k === 'goal') {
+                if (ev.s === oldPlayerId) {
+                    ev.s = newPlayerId;
+                    oldTouchesCount++;
+                    modified = true;
+                }
+                if (ev.a === oldPlayerId) {
+                    ev.a = newPlayerId;
+                    modified = true;
+                }
+            }
+
+            // Touch
+            if (ev.k === 'touch' && ev.p === oldPlayerId) {
+                ev.p = newPlayerId;
+                oldTouchesCount++;
+                modified = true;
+            }
+
+            // Difesa o Callahan
+            if ((ev.k === 'd' || ev.k === 'call') && ev.p === oldPlayerId) {
+                ev.p = newPlayerId;
+                if (ev.k === 'call') oldTouchesCount++;
+                modified = true;
+            }
+
+            // Turnover (tt, td, ts, tx)
+            if ((ev.k === 'tt' || ev.k === 'td' || ev.k === 'ts' || ev.k === 'tx') && ev.p === oldPlayerId) {
+                ev.p = newPlayerId;
+                modified = true;
+            }
+
+            // Errore avversario (err)
+            if (ev.k === 'err' && ev.p === oldPlayerId) {
+                ev.p = newPlayerId;
+                modified = true;
+            }
+
+            if (modified) {
+                currentEvents[i] = ev;
+            }
+        }
+
+        // Sincronizza manualTouches se presente
+        let updatedManualTouches = match.manualTouches ? { ...match.manualTouches } : undefined;
+        if (updatedManualTouches && oldTouchesCount > 0) {
+            if (updatedManualTouches[oldPlayerId] != null) {
+                updatedManualTouches[oldPlayerId] = Math.max(0, updatedManualTouches[oldPlayerId] - oldTouchesCount);
+            }
+            updatedManualTouches[newPlayerId] = (updatedManualTouches[newPlayerId] || 0) + oldTouchesCount;
+        }
+
+        const newDerive = derive({ pullFirst: match.pullFirst, events: currentEvents });
+        const updatedMatch: Partial<MatchAnalysis> & { id: string } = {
+            id: match.id,
+            events: currentEvents,
+            ourScore: newDerive.score.us,
+            theirScore: newDerive.score.them,
+            ...(updatedManualTouches ? { manualTouches: updatedManualTouches } : {}),
+        };
+
+        try {
+            await updateMatchAnalysis(updatedMatch);
+            showAlert('Successo', `Formazione e statistiche della meta #${pointNumber} aggiornate.`);
+        } catch {
+            showAlert('Errore', 'Impossibile aggiornare la formazione della meta.');
         }
     };
 
@@ -590,6 +867,9 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
         handleFlipRatio,
         handleFlipDir,
         handleUpdatePullCoord,
+        handleUpdateTurnoverEvent,
+        handleUpdateGoalEvent,
+        handleUpdatePointLine,
         handleTriggerHalfTime,
         handleToggleDone,
         handleExportExcel,

@@ -9,6 +9,7 @@ interface TournamentStatsTabProps {
     sortKey: SortKey;
     sortAsc: boolean;
     onSort: (key: SortKey) => void;
+    onSelectPlayer?: (player: PlayerStatRow) => void;
     theme: any;
 }
 
@@ -18,6 +19,7 @@ export const TournamentStatsTab: React.FC<TournamentStatsTabProps> = ({
     sortKey,
     sortAsc,
     onSort,
+    onSelectPlayer,
     theme,
 }) => {
     return (
@@ -48,7 +50,7 @@ export const TournamentStatsTab: React.FC<TournamentStatsTabProps> = ({
             <View style={[styles.tableContainer, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
                 <Text style={[styles.tableTitle, { color: theme.colors.text }]}>Classifica Giocatori Torneo</Text>
                 <Text style={[styles.tableSub, { color: theme.colors.textSecondary }]}>
-                    Tocca l'intestazione di colonna per ordinare
+                    Tocca un giocatore per i dettagli per partita · Tocca l'intestazione per ordinare
                 </Text>
 
                 <ScrollView horizontal showsHorizontalScrollIndicator={true}>
@@ -81,8 +83,10 @@ export const TournamentStatsTab: React.FC<TournamentStatsTabProps> = ({
                         </View>
 
                         {sortedPlayerStats.map((p, idx) => (
-                            <View
+                            <TouchableOpacity
                                 key={p.id}
+                                activeOpacity={0.7}
+                                onPress={() => onSelectPlayer?.(p)}
                                 style={[
                                     styles.tableRow,
                                     {
@@ -120,7 +124,7 @@ export const TournamentStatsTab: React.FC<TournamentStatsTabProps> = ({
                                 <Text style={[styles.cellCol, styles.colNum, styles.cellText, { color: p.plusMinus >= 0 ? '#2e7d32' : theme.colors.danger, fontWeight: 'bold' }]}>
                                     {p.plusMinus > 0 ? `+${p.plusMinus}` : p.plusMinus}
                                 </Text>
-                            </View>
+                            </TouchableOpacity>
                         ))}
 
                         {sortedPlayerStats.length === 0 && (

@@ -182,9 +182,9 @@ export default function PlayActionPhase({
                                     style={[styles.skipBtn, { backgroundColor: '#2E8540', borderColor: '#2E8540' }]}
                                     onPress={() => {
                                         const e = pending.e!;
-                                        // Errore di lancio: pallino all'inizio della freccia (rilascio)
+                                        // Errore di lancio ed errore avversario: pallino all'inizio della freccia (rilascio)
                                         // Errore di presa: pallino alla fine della freccia (caduta/ricezione)
-                                        const isThrow = e.k === 'tt';
+                                        const isThrow = e.k === 'tt' || e.k === 'err';
                                         const targetPt = isThrow ? pendingTrajectory[0] : pendingTrajectory[pendingTrajectory.length - 1];
                                         setPending(null);
                                         setPendingTrajectory(null);

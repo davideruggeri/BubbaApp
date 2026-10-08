@@ -89,6 +89,9 @@ export default function LiveMatchScreen() {
         handleFlipRatio,
         handleFlipDir,
         handleUpdatePullCoord,
+        handleUpdateTurnoverEvent,
+        handleUpdateGoalEvent,
+        handleUpdatePointLine,
         handleTriggerHalfTime,
         handleToggleDone,
         handleExportExcel,
@@ -261,6 +264,9 @@ export default function LiveMatchScreen() {
                     playerMap={playerMap}
                     canEdit={canEdit}
                     onUpdatePullCoord={handleUpdatePullCoord}
+                    onUpdateTurnoverEvent={handleUpdateTurnoverEvent}
+                    onUpdateGoalEvent={handleUpdateGoalEvent}
+                    onUpdatePointLine={handleUpdatePointLine}
                 />
             )}
 

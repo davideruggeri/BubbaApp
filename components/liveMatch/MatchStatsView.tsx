@@ -22,6 +22,9 @@ export default function MatchStatsView({
     match,
     canEdit = false,
     onUpdatePullCoord,
+    onUpdateTurnoverEvent,
+    onUpdateGoalEvent,
+    onUpdatePointLine,
 }: MatchStatsViewProps) {
     const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
 
@@ -71,7 +74,14 @@ export default function MatchStatsView({
             />
 
             {/* Mappa Turnover & Difese */}
-            <TurnoverMapCard st={st} match={match} P={P} />
+            <TurnoverMapCard
+                st={st}
+                match={match}
+                P={P}
+                isMobile={isMobile}
+                canEdit={canEdit}
+                onUpdateTurnoverEvent={onUpdateTurnoverEvent}
+            />
 
             {/* Modale Scheda Dettaglio Giocatore */}
             <PlayerDetailModal
@@ -92,6 +102,10 @@ export default function MatchStatsView({
                 P={P}
                 opponentName={match.opponent}
                 isMobile={isMobile}
+                canEdit={canEdit}
+                match={match}
+                onUpdateGoalEvent={onUpdateGoalEvent}
+                onUpdatePointLine={onUpdatePointLine}
             />
         </ScrollView>
     );

@@ -309,6 +309,7 @@ export type MatchAnalysis = {
     isSingleMatch?: boolean;
     eventId?: string | null;
     eventName?: string | null;
+    orderIndex?: number; // Ordinamento manuale all'interno del torneo
     // Roster personalizzato / salvato con la partita
     customRoster?: MatchRosterPlayer[];
     // Override manuale tocchi per partita conclusa o recupero dati

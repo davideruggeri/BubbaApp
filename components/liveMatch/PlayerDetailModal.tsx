@@ -70,6 +70,7 @@ export const PlayerDetailModal: React.FC<PlayerDetailModalProps> = ({
             for (const e of (pt.ev || [])) {
                 if (e.k === 'touch' && e.p === playerId) touchesInPt++;
                 if (e.k === 'goal' && e.s === playerId) {
+                    touchesInPt++;
                     playerActions.push({
                         kind: 'goal',
                         desc: e.a ? `⚽ Meta segnata (Assist di ${P(e.a).name})` : '⚽ Meta segnata',

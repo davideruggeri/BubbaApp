@@ -19,3 +19,23 @@ export interface TeamStatsSummary {
     goalDiff: number;
     hasLive: boolean;
 }
+
+export interface PlayerMatchStatItem {
+    matchId: string;
+    opponent: string;
+    date?: string;
+    ourScore: number;
+    theirScore: number;
+    status: string;
+    isPlayed: boolean;
+    pts: number;
+    ptsO: number;
+    ptsD: number;
+    goals: number;
+    ast: number;
+    ds: number;
+    toTot: number;
+    touches: number;
+    plusMinus: number;
+}
+

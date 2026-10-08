@@ -15,6 +15,7 @@ export interface ActionDetailModalData {
     defenseSchema?: string;
     coordX?: number;
     coordY?: number;
+    eventIndex?: number;
 }
 
 export interface PullDetailModalData {
@@ -39,4 +40,7 @@ export interface MatchStatsViewProps {
     playerMap: Record<string, { name: string; g: 'M' | 'F' }>;
     canEdit?: boolean;
     onUpdatePullCoord?: (eventIndex: number, newCoord: { x: number; y: number }) => Promise<void>;
+    onUpdateTurnoverEvent?: (eventIndex: number, updatedFields: any) => Promise<void>;
+    onUpdateGoalEvent?: (eventIndex: number, updated: { s?: string | null; a?: string | null }) => Promise<void>;
+    onUpdatePointLine?: (pointNumber: number, oldPlayerId: string, newPlayerId: string) => Promise<void>;
 }

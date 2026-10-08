@@ -72,14 +72,28 @@ export default function LineSubstitutionModal({
                                             style={[
                                                 styles.pbtn,
                                                 isSel && styles.pbtnSel,
-                                                { backgroundColor: isSel ? '#E3ECF5' : theme.colors.card, borderColor: isSel ? '#003057' : theme.colors.border }
+                                                {
+                                                    backgroundColor: isSel
+                                                        ? (theme.dark ? '#1E3A5F' : '#E3ECF5')
+                                                        : theme.colors.card,
+                                                    borderColor: isSel
+                                                        ? (theme.dark ? '#38BDF8' : '#003057')
+                                                        : theme.colors.border,
+                                                }
                                             ]}
                                             onPress={() => {
                                                 setLineSel(prev => (prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]));
                                             }}
                                         >
                                             <View style={{ paddingRight: 24, flex: 1 }}>
-                                                <Text style={[styles.pbtnName, { color: theme.colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+                                                <Text
+                                                    style={[
+                                                        styles.pbtnName,
+                                                        { color: isSel && !theme.dark ? '#003057' : theme.colors.text }
+                                                    ]}
+                                                    numberOfLines={1}
+                                                    ellipsizeMode="tail"
+                                                >
                                                     {p.name}
                                                 </Text>
                                             </View>

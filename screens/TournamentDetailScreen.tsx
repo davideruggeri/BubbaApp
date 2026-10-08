@@ -18,6 +18,8 @@ import {
     TournamentStatsTab,
     EditMatchDateModal,
     LinkTournamentModal,
+    TournamentPlayerDetailModal,
+    ReorderTournamentMatchesModal,
 } from '../components/tournamentDetail';
 
 type TournamentDetailRouteProp = RouteProp<RootStackParamList, 'TournamentDetail'>;
@@ -61,6 +63,12 @@ export default function TournamentDetailScreen() {
         linkModalVisible,
         setLinkModalVisible,
         handleLinkTournamentToEvent,
+        selectedPlayerForDetail,
+        setSelectedPlayerForDetail,
+        selectedPlayerMatchStats,
+        reorderModalVisible,
+        setReorderModalVisible,
+        handleSaveMatchesOrder,
     } = useTournamentDetailData(tournamentName);
 
     return (
@@ -72,13 +80,30 @@ export default function TournamentDetailScreen() {
 
             {/* Quick Action / Stats Bar */}
             <View style={[styles.actionBar, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border }]}>
-                <TouchableOpacity
-                    style={[styles.actionChip, { backgroundColor: '#2E8540' }]}
-                    onPress={handleExportExcel}
-                    activeOpacity={0.8}
-                >
-                    <Text style={styles.actionChipText}>📊 Esporta Excel Torneo</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                        style={[styles.actionChip, { backgroundColor: '#2E8540', flex: 1 }]}
+                        onPress={handleExportExcel}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={styles.actionChipText}>📊 Esporta Excel Torneo</Text>
+                    </TouchableOpacity>
+                    {tournamentMatches.length > 1 && (
+                        <TouchableOpacity
+                            style={[
+                                styles.actionChip,
+                                {
+                                    backgroundColor: theme.dark ? '#334155' : '#0288D1',
+                                    paddingHorizontal: 14,
+                                },
+                            ]}
+                            onPress={() => setReorderModalVisible(true)}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={styles.actionChipText}>↕️ Riordina</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
 
                 <View style={styles.tabContainer}>
                     <TouchableOpacity
@@ -264,9 +289,25 @@ export default function TournamentDetailScreen() {
                     sortKey={sortKey}
                     sortAsc={sortAsc}
                     onSort={handleSort}
+                    onSelectPlayer={setSelectedPlayerForDetail}
                     theme={theme}
                 />
             )}
+
+            {/* Modal Dettaglio Statistiche Giocatore per Partita nel Torneo */}
+            <TournamentPlayerDetailModal
+                visible={!!selectedPlayerForDetail}
+                player={selectedPlayerForDetail}
+                matchStats={selectedPlayerMatchStats}
+                theme={theme}
+                onClose={() => setSelectedPlayerForDetail(null)}
+                onPressMatch={matchId => {
+                    const targetMatch = tournamentMatches.find(m => m.id === matchId);
+                    if (targetMatch) {
+                        navigation.navigate('LiveMatch', { matchId: targetMatch.id, initialMatch: targetMatch });
+                    }
+                }}
+            />
 
             {/* Modal Selezione Rapida Giorno Partita per il Torneo */}
             <EditMatchDateModal
@@ -323,6 +364,15 @@ export default function TournamentDetailScreen() {
                 theme={theme}
                 onClose={() => setLinkModalVisible(false)}
                 onSelectEvent={handleLinkTournamentToEvent}
+            />
+
+            {/* Modal Riordina Partite del Torneo */}
+            <ReorderTournamentMatchesModal
+                visible={reorderModalVisible}
+                matches={tournamentMatches}
+                theme={theme}
+                onClose={() => setReorderModalVisible(false)}
+                onSave={handleSaveMatchesOrder}
             />
         </SafeAreaView>
     );

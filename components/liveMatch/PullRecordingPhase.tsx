@@ -70,11 +70,25 @@ export default function PullRecordingPhase({
                                     style={[
                                         styles.pbtn,
                                         isSelected && styles.pbtnSel,
-                                        { backgroundColor: isSelected ? '#E3ECF5' : theme.colors.card, borderColor: isSelected ? '#003057' : theme.colors.border }
+                                        {
+                                            backgroundColor: isSelected
+                                                ? (theme.dark ? '#1E3A5F' : '#E3ECF5')
+                                                : theme.colors.card,
+                                            borderColor: isSelected
+                                                ? (theme.dark ? '#38BDF8' : '#003057')
+                                                : theme.colors.border,
+                                        }
                                     ]}
                                     onPress={() => canEdit && onSetPullPuller(id)}
                                 >
-                                    <Text style={[styles.pbtnName, { color: theme.colors.text }]}>{P(id).name}</Text>
+                                    <Text
+                                        style={[
+                                            styles.pbtnName,
+                                            { color: isSelected && !theme.dark ? '#003057' : theme.colors.text }
+                                        ]}
+                                    >
+                                        {P(id).name}
+                                    </Text>
                                     <View style={[styles.genderBadge, { backgroundColor: P(id).g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
                                         <Text style={styles.genderText}>{P(id).g}</Text>
                                     </View>

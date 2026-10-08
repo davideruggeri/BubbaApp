@@ -4,3 +4,5 @@ export * from './useTournamentDetailData';
 export * from './TournamentMatchCard';
 export * from './TournamentStatsTab';
 export * from './TournamentModals';
+export * from './TournamentPlayerDetailModal';
+export * from './ReorderTournamentMatchesModal';

@@ -7,7 +7,7 @@ import { derive, playerStats } from '../../utils/statsEngine';
 import { exportAndDownloadXLSX } from '../../utils/matchExporter';
 import { showConfirmation, showAlert } from '../../utils/alert';
 import { getEventDays } from '../../screens/AnalisiPartitaScreen';
-import { SortKey, PlayerStatRow, TeamStatsSummary } from './tournamentDetailTypes';
+import { SortKey, PlayerStatRow, TeamStatsSummary, PlayerMatchStatItem } from './tournamentDetailTypes';
 
 export function useTournamentDetailData(tournamentName: string) {
     const [allMatches, setAllMatches] = useState<MatchAnalysis[]>([]);
@@ -27,6 +27,12 @@ export function useTournamentDetailData(tournamentName: string) {
     // Gestione Collegamento Torneo ad Evento Calendario
     const [linkModalVisible, setLinkModalVisible] = useState<boolean>(false);
 
+    // Gestione Dettaglio Giocatore (Statistiche per Partita)
+    const [selectedPlayerForDetail, setSelectedPlayerForDetail] = useState<PlayerStatRow | null>(null);
+
+    // Gestione Riordino Manuale Partite Torneo
+    const [reorderModalVisible, setReorderModalVisible] = useState<boolean>(false);
+
     useEffect(() => {
         const unsubMatches = subscribeToMatchAnalysis(setAllMatches);
         const unsubMembers = subscribeToMembers(setAllMembers);
@@ -38,14 +44,21 @@ export function useTournamentDetailData(tournamentName: string) {
         };
     }, []);
 
-    // Filtra partite appartenenti a questo torneo
+    // Filtra partite appartenenti a questo torneo (di base dalla più vecchia alla più nuova, poi per orderIndex)
     const tournamentMatches = useMemo(() => {
         const filtered = allMatches.filter(m =>
             !m.isSingleMatch &&
             m.eventName &&
             m.eventName.trim().toLowerCase() === tournamentName.trim().toLowerCase()
         );
-        filtered.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        filtered.sort((a, b) => {
+            const dateCmp = (a.date || '').localeCompare(b.date || '');
+            if (dateCmp !== 0) return dateCmp;
+            if (a.orderIndex != null && b.orderIndex != null) return a.orderIndex - b.orderIndex;
+            if (a.orderIndex != null) return -1;
+            if (b.orderIndex != null) return 1;
+            return (a.id || '').localeCompare(b.id || '');
+        });
         return filtered;
     }, [allMatches, tournamentName]);
 
@@ -248,6 +261,77 @@ export function useTournamentDetailData(tournamentName: string) {
         }
     };
 
+    const selectedPlayerMatchStats = useMemo<PlayerMatchStatItem[]>(() => {
+        if (!selectedPlayerForDetail) return [];
+
+        const playerId = selectedPlayerForDetail.id;
+        const result: PlayerMatchStatItem[] = [];
+
+        for (const m of tournamentMatches) {
+            let us = m.ourScore || 0;
+            let them = m.theirScore || 0;
+            if (m.events && m.events.length) {
+                const st = derive(m);
+                us = st.score.us;
+                them = st.score.them;
+            }
+
+            const mStats = playerStats([{ pullFirst: m.pullFirst, events: m.events, manualTouches: m.manualTouches }]);
+            const ps = mStats[playerId] || {
+                pts: 0,
+                ptsO: 0,
+                ptsD: 0,
+                goals: 0,
+                ast: 0,
+                ds: 0,
+                toTot: 0,
+                touches: 0,
+                plusMinus: 0,
+            };
+
+            const isPlayed = (ps.pts > 0 || ps.goals > 0 || ps.ast > 0 || ps.ds > 0 || ps.toTot > 0 || (ps.touches || 0) > 0);
+
+            result.push({
+                matchId: m.id,
+                opponent: m.opponent || 'Avversario',
+                date: m.date,
+                ourScore: us,
+                theirScore: them,
+                status: m.status || 'completed',
+                isPlayed,
+                pts: ps.pts,
+                ptsO: ps.ptsO,
+                ptsD: ps.ptsD,
+                goals: ps.goals,
+                ast: ps.ast,
+                ds: ps.ds,
+                toTot: ps.toTot,
+                touches: ps.touches || 0,
+                plusMinus: ps.plusMinus,
+            });
+        }
+
+        return result;
+    }, [selectedPlayerForDetail, tournamentMatches]);
+
+    const handleSaveMatchesOrder = async (orderedMatches: MatchAnalysis[]) => {
+        try {
+            for (let i = 0; i < orderedMatches.length; i++) {
+                const m = orderedMatches[i];
+                if (m.orderIndex !== i) {
+                    await updateMatchAnalysis({
+                        id: m.id,
+                        orderIndex: i,
+                    });
+                }
+            }
+            setReorderModalVisible(false);
+            showAlert("Ordine Salvato", "L'ordine delle partite del torneo è stato aggiornato.");
+        } catch {
+            showAlert("Errore", "Impossibile salvare l'ordine delle partite.");
+        }
+    };
+
     return {
         tournamentMatches,
         tournamentEvent,
@@ -274,5 +358,13 @@ export function useTournamentDetailData(tournamentName: string) {
         linkModalVisible,
         setLinkModalVisible,
         handleLinkTournamentToEvent,
+        // Dettaglio Giocatore
+        selectedPlayerForDetail,
+        setSelectedPlayerForDetail,
+        selectedPlayerMatchStats,
+        // Riordino Partite
+        reorderModalVisible,
+        setReorderModalVisible,
+        handleSaveMatchesOrder,
     };
 }

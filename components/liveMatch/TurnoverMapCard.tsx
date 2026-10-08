@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { styles } from './liveMatchStyles';
 import { useTheme } from '../../context/ThemeContext';
 import InteractiveField, { FieldDot, FieldTrajectory } from '../InteractiveField';
@@ -11,15 +11,62 @@ interface TurnoverMapCardProps {
     st: any;
     match: MatchAnalysis;
     P: (id: string) => { name: string; g: 'M' | 'F' };
+    isMobile?: boolean;
+    canEdit?: boolean;
+    onUpdateTurnoverEvent?: (
+        eventIndex: number,
+        updatedFields: {
+            k?: 'tt' | 'td' | 'ts' | 'tx' | 'd' | 'err' | 'call';
+            p?: string | null;
+            x?: number | null;
+            y?: number | null;
+            trajectory?: { x: number; y: number }[];
+        }
+    ) => Promise<void>;
 }
 
-export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }) => {
+export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
+    st,
+    match,
+    P,
+    isMobile = false,
+    canEdit = false,
+    onUpdateTurnoverEvent,
+}) => {
     const { theme } = useTheme();
 
     const [toStatsFilter, setToStatsFilter] = useState<'all' | 'toUs' | 'toThem'>('all');
     const [toOriginFilter, setToOriginFilter] = useState<'all' | 'O' | 'D'>('all');
     const [toFieldFlip, setToFieldFlip] = useState<boolean>(false);
     const [selectedAction, setSelectedAction] = useState<ActionDetailModalData | null>(null);
+
+    // Stato modifica errore
+    const [isEditingAction, setIsEditingAction] = useState<boolean>(false);
+    const [tempKind, setTempKind] = useState<string>('tt');
+    const [tempPlayerId, setTempPlayerId] = useState<string | null>(null);
+    const [tempTrajectory, setTempTrajectory] = useState<{ x: number; y: number }[] | null>(null);
+    const [tempCoord, setTempCoord] = useState<{ x: number; y: number } | null>(null);
+    const [isSaving, setIsSaving] = useState<boolean>(false);
+
+    const openActionModal = (actionData: ActionDetailModalData) => {
+        setSelectedAction(actionData);
+        setIsEditingAction(false);
+        setTempKind(actionData.kind);
+        setTempPlayerId(actionData.event?.p || null);
+        setTempTrajectory(actionData.event?.trajectory || null);
+        setTempCoord(
+            actionData.event?.x != null && actionData.event?.y != null
+                ? { x: actionData.event.x, y: actionData.event.y }
+                : null
+        );
+    };
+
+    const closeActionModal = () => {
+        setSelectedAction(null);
+        setIsEditingAction(false);
+        setTempTrajectory(null);
+        setTempCoord(null);
+    };
 
     // Punti e Traiettorie Turnover & Difese
     const toDots: FieldDot[] = [];
@@ -86,7 +133,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                 let dotX = e.x;
                 let dotY = e.y;
                 if (e.trajectory && e.trajectory.length >= 2) {
-                    if (e.k === 'tt') {
+                    if (e.k === 'tt' || e.k === 'err') {
                         dotX = e.trajectory[0].x;
                         dotY = e.trajectory[0].y;
                     } else if (e.k === 'td') {
@@ -128,10 +175,15 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                 const dsetEv = pt.ev.find((item: any) => item.k === 'dset');
                 const defenseSchema = dsetEv ? dsetEv.v : undefined;
 
+                const evIdxInMatch = (match.events || []).findIndex(
+                    item => item === e || (item.k === e.k && item.t === e.t && item.p === e.p && item.x === e.x && item.y === e.y)
+                );
+
                 const actionData: ActionDetailModalData = {
                     event: e,
                     point: pt,
                     pointIndex: pt.n,
+                    eventIndex: evIdxInMatch,
                     kind: e.k,
                     scoreUs: pScore.us,
                     scoreThem: pScore.them,
@@ -151,7 +203,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                     c: color,
                     r: 1.2,
                     label: pName ? pName : shortCode,
-                    onPress: () => setSelectedAction(actionData),
+                    onPress: () => openActionModal(actionData),
                     data: actionData,
                 });
 
@@ -160,7 +212,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                         points: e.trajectory,
                         color,
                         label: pName,
-                        onPress: () => setSelectedAction(actionData),
+                        onPress: () => openActionModal(actionData),
                         data: actionData,
                     });
                 }
@@ -200,9 +252,9 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                                 toOriginFilter === f.key
                                     ? {
                                           backgroundColor:
-                                              f.key === 'O' ? '#C8323C' : f.key === 'D' ? '#1F6FD1' : '#003057',
+                                              f.key === 'O' ? '#C8323C' : f.key === 'D' ? '#1F6FD1' : (theme.dark ? '#2563EB' : '#003057'),
                                           borderColor:
-                                              f.key === 'O' ? '#A8252F' : f.key === 'D' ? '#1756A4' : '#003057',
+                                              f.key === 'O' ? '#A8252F' : f.key === 'D' ? '#1756A4' : (theme.dark ? '#60A5FA' : '#003057'),
                                       }
                                     : {
                                           backgroundColor: theme.dark ? '#1E293B' : '#F1F5F9',
@@ -309,12 +361,12 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                 💡 Tocca un pallino o una freccia sul campo per aprire i dettagli completi dell'azione
             </Text>
 
-            {/* Modal Dettaglio Azione / Turnover / Difesa */}
+            {/* Modal Dettaglio e Modifica Azione / Turnover / Difesa */}
             <Modal
                 visible={!!selectedAction}
                 transparent={true}
                 animationType="fade"
-                onRequestClose={() => setSelectedAction(null)}
+                onRequestClose={closeActionModal}
             >
                 <TouchableOpacity
                     style={{
@@ -325,14 +377,15 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                         padding: 16,
                     }}
                     activeOpacity={1}
-                    onPress={() => setSelectedAction(null)}
+                    onPress={closeActionModal}
                 >
                     <TouchableOpacity
                         activeOpacity={1}
                         onPress={e => e.stopPropagation()}
                         style={{
                             width: '100%',
-                            maxWidth: 420,
+                            maxWidth: 440,
+                            maxHeight: '90%',
                             backgroundColor: theme.colors.card,
                             borderRadius: 16,
                             borderWidth: 1,
@@ -346,6 +399,244 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                         }}
                     >
                         {selectedAction && (() => {
+                            if (isEditingAction) {
+                                const isTrajMode = tempKind === 'tt' || tempKind === 'td' || tempKind === 'err';
+                                const pointLine = selectedAction.point?.line || [];
+                                const rosterList: string[] = pointLine.length > 0
+                                    ? pointLine
+                                    : (match.customRoster?.map(r => r.id) || (match.players?.map((p: any) => p.id) || []));
+                                const isAttRight = attRight(match, selectedAction.pointIndex, st.halfTimePoint);
+
+                                return (
+                                    <ScrollView showsVerticalScrollIndicator={false}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                                            <View style={{ backgroundColor: '#003057', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}>
+                                                <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>
+                                                    ✏️ Modifica Errore / Azione
+                                                </Text>
+                                            </View>
+                                            <TouchableOpacity
+                                                onPress={() => setIsEditingAction(false)}
+                                                style={{
+                                                    padding: 6,
+                                                    backgroundColor: theme.dark ? '#334155' : '#E2E8F0',
+                                                    borderRadius: 20,
+                                                    width: 28,
+                                                    height: 28,
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                }}
+                                            >
+                                                <Text style={{ fontSize: 13, fontWeight: 'bold', color: theme.colors.text }}>✕</Text>
+                                            </TouchableOpacity>
+                                        </View>
+
+                                        {/* Selezione Tipo Errore */}
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 6 }}>
+                                            Tipo di Evento:
+                                        </Text>
+                                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                                            {[
+                                                { k: 'tt', label: '🥏 TO Lancio' },
+                                                { k: 'td', label: '🤲 TO Presa' },
+                                                { k: 'err', label: '⚠️ Errore Loro' },
+                                                { k: 'd', label: '🛡️ Difesa' },
+                                                { k: 'ts', label: '⏱️ Stall Out' },
+                                            ].map(item => (
+                                                <TouchableOpacity
+                                                    key={item.k}
+                                                    onPress={() => {
+                                                        setTempKind(item.k);
+                                                        if (item.k === 'err') setTempPlayerId(null);
+                                                    }}
+                                                    style={{
+                                                        paddingHorizontal: 10,
+                                                        paddingVertical: 6,
+                                                        borderRadius: 8,
+                                                        backgroundColor: tempKind === item.k ? (theme.dark ? '#2563EB' : '#003057') : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                        borderWidth: 1.5,
+                                                        borderColor: tempKind === item.k ? (theme.dark ? '#60A5FA' : '#003057') : (theme.dark ? '#334155' : theme.colors.border),
+                                                    }}
+                                                >
+                                                    <Text
+                                                        style={{
+                                                            fontSize: 12,
+                                                            fontWeight: tempKind === item.k ? 'bold' : '600',
+                                                            color: tempKind === item.k ? '#fff' : theme.colors.text,
+                                                        }}
+                                                    >
+                                                        {item.label}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+
+                                        {/* Selezione Giocatore (se non è errore avversario) */}
+                                        {tempKind !== 'err' && (
+                                            <View style={{ marginBottom: 14 }}>
+                                                <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 6 }}>
+                                                    {tempKind === 'd' ? 'Difensore:' : tempKind === 'td' ? 'Chi ha subito il drop:' : 'Giocatore coinvolto:'}
+                                                </Text>
+                                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                                                    <TouchableOpacity
+                                                        onPress={() => setTempPlayerId(null)}
+                                                        style={{
+                                                            paddingHorizontal: 10,
+                                                            paddingVertical: 6,
+                                                            borderRadius: 8,
+                                                            backgroundColor: tempPlayerId === null ? (theme.dark ? '#2563EB' : '#003057') : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                            borderWidth: 1.5,
+                                                            borderColor: tempPlayerId === null ? (theme.dark ? '#60A5FA' : '#003057') : (theme.dark ? '#334155' : theme.colors.border),
+                                                        }}
+                                                    >
+                                                        <Text style={{ fontSize: 11, color: tempPlayerId === null ? '#fff' : theme.colors.text, fontWeight: '600' }}>
+                                                            Senza nome
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                    {rosterList.map((pId: string) => {
+                                                        const isSel = tempPlayerId === pId;
+                                                        return (
+                                                            <TouchableOpacity
+                                                                key={pId}
+                                                                onPress={() => setTempPlayerId(pId)}
+                                                                style={{
+                                                                    paddingHorizontal: 10,
+                                                                    paddingVertical: 6,
+                                                                    borderRadius: 8,
+                                                                    backgroundColor: isSel ? (theme.dark ? '#2563EB' : '#003057') : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                                    borderWidth: 1.5,
+                                                                    borderColor: isSel ? (theme.dark ? '#60A5FA' : '#003057') : (theme.dark ? '#334155' : theme.colors.border),
+                                                                }}
+                                                            >
+                                                                <Text style={{ fontSize: 11, color: isSel ? '#fff' : theme.colors.text, fontWeight: '600' }}>
+                                                                    {P(pId).name}
+                                                                </Text>
+                                                            </TouchableOpacity>
+                                                        );
+                                                    })}
+                                                </ScrollView>
+                                            </View>
+                                        )}
+
+                                        {/* Modifica Traiettoria / Coordinata su Campo */}
+                                        <View style={{ marginBottom: 12 }}>
+                                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                                <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary }}>
+                                                    Posizione / Traiettoria:
+                                                </Text>
+                                                {tempTrajectory && (
+                                                    <TouchableOpacity
+                                                        onPress={() => setTempTrajectory(null)}
+                                                        style={{ paddingVertical: 2, paddingHorizontal: 6, backgroundColor: '#E2E8F0', borderRadius: 4 }}
+                                                    >
+                                                        <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#1E293B' }}>↺ Ridisegna</Text>
+                                                    </TouchableOpacity>
+                                                )}
+                                            </View>
+
+                                            <View
+                                                style={{
+                                                    borderRadius: 8,
+                                                    overflow: 'hidden',
+                                                    borderWidth: 1,
+                                                    borderColor: '#22C55E',
+                                                }}
+                                            >
+                                                <InteractiveField
+                                                    dots={
+                                                        tempCoord && (!tempTrajectory || tempTrajectory.length < 2)
+                                                            ? [{ x: tempCoord.x, y: tempCoord.y, c: '#E07A1F', r: 1.2 }]
+                                                            : []
+                                                    }
+                                                    trajectories={
+                                                        tempTrajectory && tempTrajectory.length >= 2
+                                                            ? [{ points: tempTrajectory, color: '#E07A1F' }]
+                                                            : []
+                                                    }
+                                                    interactive={true}
+                                                    drawTrajectoryMode={isTrajMode && !tempTrajectory}
+                                                    drawingColor="#E07A1F"
+                                                    isPlayMode={true}
+                                                    height={isMobile ? 160 : 190}
+                                                    enlargeable={false}
+                                                    flip={!isAttRight}
+                                                    onTrajectoryComplete={traj => {
+                                                        setTempTrajectory(traj);
+                                                        setTempCoord(null);
+                                                    }}
+                                                    onFieldPress={c => {
+                                                        setTempCoord(c);
+                                                        setTempTrajectory(null);
+                                                    }}
+                                                />
+                                            </View>
+                                            <Text style={{ fontSize: 10, color: theme.colors.textSecondary, marginTop: 4, textAlign: 'center' }}>
+                                                {isTrajMode
+                                                    ? 'Trascina sul campo per tracciare la linea oppure tocca per un punto singolo.'
+                                                    : 'Tocca sul campo per impostare il punto.'}
+                                            </Text>
+                                        </View>
+
+                                        {/* Bottoni Salva / Annulla */}
+                                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                                            <TouchableOpacity
+                                                onPress={() => setIsEditingAction(false)}
+                                                style={{
+                                                    flex: 1,
+                                                    paddingVertical: 10,
+                                                    borderRadius: 8,
+                                                    backgroundColor: theme.dark ? '#334155' : '#E2E8F0',
+                                                    alignItems: 'center',
+                                                }}
+                                            >
+                                                <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text }}>Annulla</Text>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                disabled={isSaving}
+                                                onPress={async () => {
+                                                    if (!onUpdateTurnoverEvent || selectedAction.eventIndex == null) return;
+                                                    setIsSaving(true);
+                                                    try {
+                                                        let finalX = tempCoord?.x ?? selectedAction.coordX ?? null;
+                                                        let finalY = tempCoord?.y ?? selectedAction.coordY ?? null;
+                                                        if (tempTrajectory && tempTrajectory.length >= 2) {
+                                                            if (tempKind === 'tt' || tempKind === 'err') {
+                                                                finalX = tempTrajectory[0].x;
+                                                                finalY = tempTrajectory[0].y;
+                                                            } else {
+                                                                finalX = tempTrajectory[tempTrajectory.length - 1].x;
+                                                                finalY = tempTrajectory[tempTrajectory.length - 1].y;
+                                                            }
+                                                        }
+                                                        await onUpdateTurnoverEvent(selectedAction.eventIndex, {
+                                                            k: tempKind as any,
+                                                            p: tempPlayerId,
+                                                            trajectory: tempTrajectory || undefined,
+                                                            x: finalX,
+                                                            y: finalY,
+                                                        });
+                                                        closeActionModal();
+                                                    } finally {
+                                                        setIsSaving(false);
+                                                    }
+                                                }}
+                                                style={{
+                                                    flex: 2,
+                                                    paddingVertical: 10,
+                                                    borderRadius: 8,
+                                                    backgroundColor: '#22C55E',
+                                                    alignItems: 'center',
+                                                }}
+                                            >
+                                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                                                    {isSaving ? 'Salvataggio...' : 'Conferma Modifica ✓'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    </ScrollView>
+                                );
+                            }
+
                             const isThrowTO = selectedAction.kind === 'tt';
                             const isCatchTO = selectedAction.kind === 'td';
                             const isStallTO = selectedAction.kind === 'ts';
@@ -414,7 +705,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                                             </Text>
                                         </View>
                                         <TouchableOpacity
-                                            onPress={() => setSelectedAction(null)}
+                                            onPress={closeActionModal}
                                             style={{
                                                 padding: 6,
                                                 backgroundColor: theme.dark ? '#334155' : '#E2E8F0',
@@ -609,17 +900,40 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({ st, match, P }
                                         )}
                                     </View>
 
-                                    <TouchableOpacity
-                                        onPress={() => setSelectedAction(null)}
-                                        style={{
-                                            backgroundColor: theme.colors.primary || '#003057',
-                                            paddingVertical: 11,
-                                            borderRadius: 10,
-                                            alignItems: 'center',
-                                        }}
-                                    >
-                                        <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold' }}>Chiudi</Text>
-                                    </TouchableOpacity>
+                                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                                        {canEdit !== false && onUpdateTurnoverEvent && selectedAction.eventIndex != null && selectedAction.eventIndex >= 0 && (
+                                            <TouchableOpacity
+                                                onPress={() => setIsEditingAction(true)}
+                                                style={{
+                                                    flex: 2,
+                                                    paddingVertical: 11,
+                                                    borderRadius: 10,
+                                                    backgroundColor: theme.dark ? '#2563EB' : '#003057',
+                                                    alignItems: 'center',
+                                                    flexDirection: 'row',
+                                                    justifyContent: 'center',
+                                                    gap: 6,
+                                                }}
+                                            >
+                                                <Text style={{ fontSize: 14 }}>✏️</Text>
+                                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                                                    Modifica Errore
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                        <TouchableOpacity
+                                            onPress={closeActionModal}
+                                            style={{
+                                                flex: 1,
+                                                backgroundColor: theme.dark ? '#334155' : '#E2E8F0',
+                                                paddingVertical: 11,
+                                                borderRadius: 10,
+                                                alignItems: 'center',
+                                            }}
+                                        >
+                                            <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: 'bold' }}>Chiudi</Text>
+                                        </TouchableOpacity>
+                                    </View>
                                 </>
                             );
                         })()}

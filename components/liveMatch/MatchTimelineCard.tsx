@@ -2,10 +2,11 @@
 // Scheda cronologia interattiva Play-by-Play per meta con filtri, eventi chiave e statistiche di punto
 
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { DerivedPoint, pullZone } from '../../utils/statsEngine';
 import { MatchEvent } from '../../services/firestore/types';
+import { MatchAnalysis } from '../../services/firestore';
 
 interface MatchTimelineCardProps {
     points: DerivedPoint[];
@@ -13,6 +14,26 @@ interface MatchTimelineCardProps {
     P: (id: string) => { name: string; g: 'M' | 'F' };
     opponentName?: string;
     isMobile: boolean;
+    canEdit?: boolean;
+    match?: MatchAnalysis;
+    onUpdateGoalEvent?: (eventIndex: number, updated: { s?: string | null; a?: string | null }) => Promise<void>;
+    onUpdatePointLine?: (pointNumber: number, oldPlayerId: string, newPlayerId: string) => Promise<void>;
+}
+
+interface EditingGoalData {
+    event: MatchEvent;
+    eventIndex: number;
+    point: DerivedPoint;
+    scorer: string | null;
+    assist: string | null;
+}
+
+interface EditingLineData {
+    pointNumber: number;
+    point: DerivedPoint;
+    currentLine: string[];
+    selectedOldPlayerId: string | null;
+    selectedNewPlayerId: string | null;
 }
 
 type FilterType = 'all' | 'breaks' | 'turnovers' | 'defenses';
@@ -23,10 +44,18 @@ export default function MatchTimelineCard({
     P,
     opponentName = 'Avversari',
     isMobile,
+    canEdit = false,
+    match,
+    onUpdateGoalEvent,
+    onUpdatePointLine,
 }: MatchTimelineCardProps) {
     const { theme } = useTheme();
 
     const [filter, setFilter] = useState<FilterType>('all');
+    const [editingGoal, setEditingGoal] = useState<EditingGoalData | null>(null);
+    const [isSavingGoal, setIsSavingGoal] = useState<boolean>(false);
+    const [editingLine, setEditingLine] = useState<EditingLineData | null>(null);
+    const [isSavingLine, setIsSavingLine] = useState<boolean>(false);
     const [expandedSet, setExpandedSet] = useState<Set<number>>(() => {
         // Di default espandiamo le ultime 3 mete per immediatezza
         const initial = new Set<number>();
@@ -122,6 +151,33 @@ export default function MatchTimelineCard({
     const collapseAll = () => {
         setExpandedSet(new Set());
     };
+
+    const rosterList = useMemo(() => {
+        const list: { id: string; name: string; g: 'M' | 'F' }[] = [];
+        const seen = new Set<string>();
+
+        if (match?.customRoster && match.customRoster.length > 0) {
+            match.customRoster.forEach(p => {
+                if (!seen.has(p.id)) {
+                    seen.add(p.id);
+                    list.push({ id: p.id, name: p.name, g: p.g });
+                }
+            });
+        }
+
+        points.forEach(pt => {
+            (pt.line || []).forEach(id => {
+                if (!seen.has(id)) {
+                    seen.add(id);
+                    const p = P(id);
+                    list.push({ id, name: p.name, g: p.g });
+                }
+            });
+        });
+
+        list.sort((a, b) => a.name.localeCompare(b.name));
+        return list;
+    }, [match?.customRoster, points, P]);
 
     // Conteggi per i filtri
     const countBreaks = pointsWithScore.filter(p => p.isBreak).length;
@@ -226,9 +282,9 @@ export default function MatchTimelineCard({
                         const { pt } = item;
 
                         // Raggruppamento o filtraggio eventi significativi del punto
-                        // Escludiamo 'start' e compattiamo tocchi ripetuti
+                        // Escludiamo 'start', 'touch' e 'pull' (il pull ha già il suo riquadro dedicato sopra)
                         const events = pt.ev || [];
-                        const significantEvents = events.filter(e => e.k !== 'start' && e.k !== 'touch');
+                        const significantEvents = events.filter(e => e.k !== 'start' && e.k !== 'touch' && e.k !== 'pull');
                         const touchCount = events.filter(e => e.k === 'touch').length;
 
                         // Calcolo durata se presente
@@ -324,10 +380,40 @@ export default function MatchTimelineCard({
                                     <View style={[styles.pointBody, { borderTopColor: theme.dark ? '#334155' : '#E2E8F0' }]}>
                                         {/* Quintetto in campo */}
                                         <View style={styles.lineupRow}>
-                                            <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>
-                                                FORMAZIONE IN CAMPO ({pt.line?.length || 0}):
-                                            </Text>
-                                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                                <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>
+                                                    FORMAZIONE IN CAMPO ({pt.line?.length || 0}):
+                                                </Text>
+                                                {canEdit && onUpdatePointLine && (
+                                                    <TouchableOpacity
+                                                        style={{
+                                                            paddingHorizontal: 8,
+                                                            paddingVertical: 3,
+                                                            borderRadius: 6,
+                                                            backgroundColor: theme.dark ? '#1E293B' : '#F1F5F9',
+                                                            borderWidth: 1,
+                                                            borderColor: theme.dark ? '#334155' : '#CBD5E1',
+                                                            flexDirection: 'row',
+                                                            alignItems: 'center',
+                                                            gap: 4,
+                                                        }}
+                                                        onPress={() => {
+                                                            const currentLine = pt.line ? [...pt.line] : [];
+                                                            setEditingLine({
+                                                                pointNumber: item.ptNum,
+                                                                point: pt,
+                                                                currentLine,
+                                                                selectedOldPlayerId: currentLine[0] || null,
+                                                                selectedNewPlayerId: null,
+                                                            });
+                                                        }}
+                                                    >
+                                                        <Text style={{ fontSize: 10 }}>✏️</Text>
+                                                        <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.text }}>Modifica Linea</Text>
+                                                    </TouchableOpacity>
+                                                )}
+                                            </View>
+                                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                                                 {(pt.line || []).map(pId => {
                                                     const player = P(pId);
                                                     const isF = player.g === 'F';
@@ -383,20 +469,54 @@ export default function MatchTimelineCard({
                                                 significantEvents.map((e, eIdx) => {
                                                     const parsed = renderEventDetails(e, P, opponentName, theme);
                                                     return (
-                                                        <View key={`ev-${eIdx}`} style={styles.eventRow}>
-                                                            <View style={[styles.eventDot, { backgroundColor: parsed.color + '25', borderColor: parsed.color }]}>
-                                                                <Text style={styles.eventDotIcon}>{parsed.icon}</Text>
-                                                            </View>
-                                                            <View style={styles.eventContent}>
-                                                                <Text style={[styles.eventTitle, { color: parsed.color }]}>
-                                                                    {parsed.title}
-                                                                </Text>
-                                                                {parsed.desc ? (
-                                                                    <Text style={[styles.eventSub, { color: theme.colors.textSecondary }]}>
-                                                                        {parsed.desc}
+                                                        <View key={`ev-${eIdx}`} style={[styles.eventRow, { justifyContent: 'space-between', alignItems: 'center' }]}>
+                                                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                                                                <View style={[styles.eventDot, { backgroundColor: parsed.color + '25', borderColor: parsed.color }]}>
+                                                                    <Text style={styles.eventDotIcon}>{parsed.icon}</Text>
+                                                                </View>
+                                                                <View style={styles.eventContent}>
+                                                                    <Text style={[styles.eventTitle, { color: parsed.color }]}>
+                                                                        {parsed.title}
                                                                     </Text>
-                                                                ) : null}
+                                                                    {parsed.desc ? (
+                                                                        <Text style={[styles.eventSub, { color: theme.colors.textSecondary }]}>
+                                                                            {parsed.desc}
+                                                                        </Text>
+                                                                    ) : null}
+                                                                </View>
                                                             </View>
+
+                                                            {canEdit && onUpdateGoalEvent && e.k === 'goal' && (
+                                                                <TouchableOpacity
+                                                                    style={{
+                                                                        paddingHorizontal: 8,
+                                                                        paddingVertical: 5,
+                                                                        borderRadius: 6,
+                                                                        backgroundColor: theme.dark ? '#1E293B' : '#F1F5F9',
+                                                                        borderWidth: 1,
+                                                                        borderColor: theme.dark ? '#334155' : '#CBD5E1',
+                                                                        flexDirection: 'row',
+                                                                        alignItems: 'center',
+                                                                        gap: 4,
+                                                                        marginLeft: 8,
+                                                                    }}
+                                                                    onPress={() => {
+                                                                        const idx = rawEvents.findIndex(item => item === e || (item.k === e.k && item.t === e.t && item.s === e.s && item.a === e.a));
+                                                                        if (idx !== -1) {
+                                                                            setEditingGoal({
+                                                                                event: e,
+                                                                                eventIndex: idx,
+                                                                                point: pt,
+                                                                                scorer: e.s || null,
+                                                                                assist: e.a || null,
+                                                                            });
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <Text style={{ fontSize: 11 }}>✏️</Text>
+                                                                    <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.text }}>Modifica</Text>
+                                                                </TouchableOpacity>
+                                                            )}
                                                         </View>
                                                     );
                                                 })
@@ -408,6 +528,467 @@ export default function MatchTimelineCard({
                         );
                     })}
                 </View>
+            )}
+
+            {/* Modal Modifica Gol & Assist */}
+            <Modal
+                visible={!!editingGoal}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setEditingGoal(null)}
+            >
+                <TouchableOpacity
+                    style={{
+                        flex: 1,
+                        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        padding: 16,
+                    }}
+                    activeOpacity={1}
+                    onPress={() => setEditingGoal(null)}
+                >
+                    <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={ev => ev.stopPropagation()}
+                        style={{
+                            width: '100%',
+                            maxWidth: 420,
+                            maxHeight: '90%',
+                            backgroundColor: theme.colors.card,
+                            borderRadius: 16,
+                            borderWidth: 1,
+                            borderColor: theme.colors.border,
+                            padding: 20,
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 4 },
+                            shadowOpacity: 0.3,
+                            shadowRadius: 10,
+                            elevation: 10,
+                        }}
+                    >
+                        {editingGoal && (() => {
+                            const pointLine = editingGoal.point?.line || [];
+                            const candidatePlayers: string[] = pointLine.length > 0
+                                ? pointLine
+                                : (match?.customRoster?.map(r => r.id) || (match?.players?.map((p: any) => p.id) || []));
+
+                            const handleSaveGoal = async () => {
+                                if (!editingGoal || !onUpdateGoalEvent) return;
+                                setIsSavingGoal(true);
+                                try {
+                                    await onUpdateGoalEvent(editingGoal.eventIndex, {
+                                        s: editingGoal.scorer,
+                                        a: editingGoal.assist,
+                                    });
+                                    setEditingGoal(null);
+                                } finally {
+                                    setIsSavingGoal(false);
+                                }
+                            };
+
+                            return (
+                                <ScrollView showsVerticalScrollIndicator={false}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                                        <View style={{ backgroundColor: '#2E8540', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}>
+                                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>
+                                                🏆 Modifica Gol & Assist (Meta #{editingGoal.point.n})
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            onPress={() => setEditingGoal(null)}
+                                            style={{
+                                                padding: 6,
+                                                backgroundColor: theme.dark ? '#334155' : '#E2E8F0',
+                                                borderRadius: 20,
+                                                width: 28,
+                                                height: 28,
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                            }}
+                                        >
+                                            <Text style={{ fontSize: 13, fontWeight: 'bold', color: theme.colors.text }}>✕</Text>
+                                        </TouchableOpacity>
+                                    </View>
+
+                                    {/* 1. Selezione Marcatore */}
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 6 }}>
+                                        Chi ha segnato la meta:
+                                    </Text>
+                                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                                        {candidatePlayers.map((pId: string) => {
+                                            const isSel = editingGoal.scorer === pId;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={pId}
+                                                    onPress={() => setEditingGoal(prev => prev ? { ...prev, scorer: pId } : null)}
+                                                    style={{
+                                                        paddingHorizontal: 11,
+                                                        paddingVertical: 7,
+                                                        borderRadius: 8,
+                                                        backgroundColor: isSel
+                                                            ? (theme.dark ? '#2563EB' : '#003057')
+                                                            : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                        borderWidth: 1.5,
+                                                        borderColor: isSel
+                                                            ? (theme.dark ? '#60A5FA' : '#003057')
+                                                            : (theme.dark ? '#334155' : theme.colors.border),
+                                                    }}
+                                                >
+                                                    <Text
+                                                        style={{
+                                                            fontSize: 12,
+                                                            fontWeight: isSel ? 'bold' : '600',
+                                                            color: isSel ? '#FFFFFF' : theme.colors.text,
+                                                        }}
+                                                    >
+                                                        {P(pId).name}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+
+                                    {/* 2. Selezione Assist */}
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 6 }}>
+                                        Chi ha fatto l'assist:
+                                    </Text>
+                                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                                        <TouchableOpacity
+                                            onPress={() => setEditingGoal(prev => prev ? { ...prev, assist: null } : null)}
+                                            style={{
+                                                paddingHorizontal: 11,
+                                                paddingVertical: 7,
+                                                borderRadius: 8,
+                                                backgroundColor: editingGoal.assist === null
+                                                    ? (theme.dark ? '#2563EB' : '#003057')
+                                                    : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                borderWidth: 1.5,
+                                                borderColor: editingGoal.assist === null
+                                                    ? (theme.dark ? '#60A5FA' : '#003057')
+                                                    : (theme.dark ? '#334155' : theme.colors.border),
+                                            }}
+                                        >
+                                            <Text
+                                                style={{
+                                                    fontSize: 12,
+                                                    fontWeight: editingGoal.assist === null ? 'bold' : '600',
+                                                    color: editingGoal.assist === null ? '#FFFFFF' : theme.colors.text,
+                                                }}
+                                            >
+                                                Nessun assist
+                                            </Text>
+                                        </TouchableOpacity>
+                                        {candidatePlayers.map((pId: string) => {
+                                            const isSel = editingGoal.assist === pId;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={pId}
+                                                    onPress={() => setEditingGoal(prev => prev ? { ...prev, assist: pId } : null)}
+                                                    style={{
+                                                        paddingHorizontal: 11,
+                                                        paddingVertical: 7,
+                                                        borderRadius: 8,
+                                                        backgroundColor: isSel
+                                                            ? (theme.dark ? '#2563EB' : '#003057')
+                                                            : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                        borderWidth: 1.5,
+                                                        borderColor: isSel
+                                                            ? (theme.dark ? '#60A5FA' : '#003057')
+                                                            : (theme.dark ? '#334155' : theme.colors.border),
+                                                    }}
+                                                >
+                                                    <Text
+                                                        style={{
+                                                            fontSize: 12,
+                                                            fontWeight: isSel ? 'bold' : '600',
+                                                            color: isSel ? '#FFFFFF' : theme.colors.text,
+                                                        }}
+                                                    >
+                                                        {P(pId).name}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+
+                                    {/* Nota informativa tocchi */}
+                                    <View
+                                        style={{
+                                            backgroundColor: theme.dark ? '#1E293B' : '#EFF6FF',
+                                            borderRadius: 8,
+                                            padding: 10,
+                                            marginBottom: 16,
+                                            borderWidth: 1,
+                                            borderColor: theme.dark ? '#334155' : '#BFDBFE',
+                                        }}
+                                    >
+                                        <Text style={{ fontSize: 11, color: theme.colors.text, lineHeight: 16 }}>
+                                            💡 Modificando chi ha segnato o assistito, i tocchi del disco (Tch) e le statistiche individuali verranno ricalcolati automaticamente per entrambi i giocatori.
+                                        </Text>
+                                    </View>
+
+                                    {/* Bottoni Salva / Annulla */}
+                                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                                        <TouchableOpacity
+                                            onPress={() => setEditingGoal(null)}
+                                            style={{
+                                                flex: 1,
+                                                paddingVertical: 10,
+                                                borderRadius: 8,
+                                                backgroundColor: theme.dark ? '#334155' : '#E2E8F0',
+                                                alignItems: 'center',
+                                            }}
+                                        >
+                                            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text }}>Annulla</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            disabled={isSavingGoal}
+                                            onPress={handleSaveGoal}
+                                            style={{
+                                                flex: 2,
+                                                paddingVertical: 10,
+                                                borderRadius: 8,
+                                                backgroundColor: '#22C55E',
+                                                alignItems: 'center',
+                                            }}
+                                        >
+                                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>
+                                                {isSavingGoal ? 'Salvataggio...' : 'Conferma Modifica ✓'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </ScrollView>
+                            );
+                        })()}
+                    </TouchableOpacity>
+                </TouchableOpacity>
+            </Modal>
+
+            {/* Modal Modifica Linea della Meta */}
+            {editingLine && (
+                <Modal
+                    visible={true}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => !isSavingLine && setEditingLine(null)}
+                >
+                    <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={() => !isSavingLine && setEditingLine(null)}
+                        style={{
+                            flex: 1,
+                            backgroundColor: 'rgba(0,0,0,0.65)',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            padding: 16,
+                        }}
+                    >
+                        <TouchableOpacity
+                            activeOpacity={1}
+                            onPress={e => e.stopPropagation()}
+                            style={{
+                                width: '100%',
+                                maxWidth: 520,
+                                maxHeight: '90%',
+                                backgroundColor: theme.colors.card,
+                                borderRadius: 16,
+                                borderWidth: 1,
+                                borderColor: theme.colors.border,
+                                padding: 18,
+                                elevation: 8,
+                            }}
+                        >
+                            {/* Header */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                                <View>
+                                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: theme.colors.text }}>
+                                        Modifica Formazione (Meta #{editingLine.pointNumber})
+                                    </Text>
+                                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 }}>
+                                        Sostituisci un giocatore in campo con un altro convocato
+                                    </Text>
+                                </View>
+                                <TouchableOpacity
+                                    onPress={() => setEditingLine(null)}
+                                    disabled={isSavingLine}
+                                    style={{
+                                        width: 30,
+                                        height: 30,
+                                        borderRadius: 15,
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        backgroundColor: theme.dark ? '#334155' : '#E2E8F0',
+                                    }}
+                                >
+                                    <Text style={{ fontSize: 14, fontWeight: 'bold', color: theme.colors.text }}>✕</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <ScrollView style={{ flexGrow: 0 }} showsVerticalScrollIndicator={true}>
+                                {/* 1. Seleziona Giocatore da Togliere */}
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 6 }}>
+                                    1. Giocatore da togliere dalla formazione:
+                                </Text>
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                                    {editingLine.currentLine.map(pId => {
+                                        const isSel = editingLine.selectedOldPlayerId === pId;
+                                        const pl = P(pId);
+                                        return (
+                                            <TouchableOpacity
+                                                key={pId}
+                                                onPress={() => setEditingLine(prev => prev ? { ...prev, selectedOldPlayerId: pId } : null)}
+                                                style={{
+                                                    paddingHorizontal: 11,
+                                                    paddingVertical: 7,
+                                                    borderRadius: 8,
+                                                    backgroundColor: isSel
+                                                        ? (theme.dark ? '#DC2626' : '#C8323C')
+                                                        : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                    borderWidth: 1.5,
+                                                    borderColor: isSel ? '#F87171' : (theme.dark ? '#334155' : theme.colors.border),
+                                                    flexDirection: 'row',
+                                                    alignItems: 'center',
+                                                    gap: 6,
+                                                }}
+                                            >
+                                                <Text style={{ fontSize: 12, fontWeight: isSel ? 'bold' : '600', color: isSel ? '#FFFFFF' : theme.colors.text }}>
+                                                    {pl.name}
+                                                </Text>
+                                                <View style={{
+                                                    backgroundColor: pl.g === 'F' ? '#e91e63' : '#1976d2',
+                                                    paddingHorizontal: 4,
+                                                    paddingVertical: 1,
+                                                    borderRadius: 4,
+                                                }}>
+                                                    <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#fff' }}>{pl.g}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                {/* 2. Seleziona Giocatore che Entra */}
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 6 }}>
+                                    2. Giocatore che subentra al suo posto:
+                                </Text>
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                                    {rosterList
+                                        .filter(p => !editingLine.currentLine.includes(p.id) || p.id === editingLine.selectedOldPlayerId)
+                                        .map(p => {
+                                            const isSel = editingLine.selectedNewPlayerId === p.id;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={p.id}
+                                                    onPress={() => setEditingLine(prev => prev ? { ...prev, selectedNewPlayerId: p.id } : null)}
+                                                    style={{
+                                                        paddingHorizontal: 11,
+                                                        paddingVertical: 7,
+                                                        borderRadius: 8,
+                                                        backgroundColor: isSel
+                                                            ? (theme.dark ? '#16A34A' : '#2E8540')
+                                                            : (theme.dark ? '#1E293B' : '#F1F5F9'),
+                                                        borderWidth: 1.5,
+                                                        borderColor: isSel ? '#4ADE80' : (theme.dark ? '#334155' : theme.colors.border),
+                                                        flexDirection: 'row',
+                                                        alignItems: 'center',
+                                                        gap: 6,
+                                                    }}
+                                                >
+                                                    <Text style={{ fontSize: 12, fontWeight: isSel ? 'bold' : '600', color: isSel ? '#FFFFFF' : theme.colors.text }}>
+                                                        {p.name}
+                                                    </Text>
+                                                    <View style={{
+                                                        backgroundColor: p.g === 'F' ? '#e91e63' : '#1976d2',
+                                                        paddingHorizontal: 4,
+                                                        paddingVertical: 1,
+                                                        borderRadius: 4,
+                                                    }}>
+                                                        <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#fff' }}>{p.g}</Text>
+                                                    </View>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                </View>
+
+                                {/* Nota trasferimento statistiche */}
+                                <View style={{
+                                    backgroundColor: theme.dark ? '#1E293B' : '#EFF6FF',
+                                    borderRadius: 8,
+                                    padding: 10,
+                                    marginBottom: 16,
+                                    borderWidth: 1,
+                                    borderColor: theme.dark ? '#334155' : '#BFDBFE',
+                                }}>
+                                    <Text style={{ fontSize: 11.5, color: theme.dark ? '#93C5FD' : '#1E40AF', lineHeight: 16 }}>
+                                        💡 <Text style={{ fontWeight: 'bold' }}>Trasferimento completo statistiche:</Text> Tutte le azioni registrate in questa meta (punto giocato, eventuali mete, assist, difese, turnover e tocchi) di{' '}
+                                        <Text style={{ fontWeight: 'bold' }}>
+                                            {editingLine.selectedOldPlayerId ? P(editingLine.selectedOldPlayerId).name : '...'}
+                                        </Text>{' '}
+                                        verranno automaticamente trasferite a{' '}
+                                        <Text style={{ fontWeight: 'bold' }}>
+                                            {editingLine.selectedNewPlayerId ? P(editingLine.selectedNewPlayerId).name : '...'}
+                                        </Text>.
+                                    </Text>
+                                </View>
+                            </ScrollView>
+
+                            {/* Azioni */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
+                                <TouchableOpacity
+                                    onPress={() => setEditingLine(null)}
+                                    disabled={isSavingLine}
+                                    style={{
+                                        paddingHorizontal: 14,
+                                        paddingVertical: 8,
+                                        borderRadius: 8,
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.border,
+                                    }}
+                                >
+                                    <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary }}>Annulla</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={async () => {
+                                        if (!editingLine.selectedOldPlayerId || !editingLine.selectedNewPlayerId) return;
+                                        if (editingLine.selectedOldPlayerId === editingLine.selectedNewPlayerId) return;
+                                        setIsSavingLine(true);
+                                        try {
+                                            await onUpdatePointLine?.(
+                                                editingLine.pointNumber,
+                                                editingLine.selectedOldPlayerId,
+                                                editingLine.selectedNewPlayerId
+                                            );
+                                            setEditingLine(null);
+                                        } finally {
+                                            setIsSavingLine(false);
+                                        }
+                                    }}
+                                    disabled={
+                                        isSavingLine ||
+                                        !editingLine.selectedOldPlayerId ||
+                                        !editingLine.selectedNewPlayerId ||
+                                        editingLine.selectedOldPlayerId === editingLine.selectedNewPlayerId
+                                    }
+                                    style={{
+                                        paddingHorizontal: 16,
+                                        paddingVertical: 8,
+                                        borderRadius: 8,
+                                        backgroundColor: '#2E8540',
+                                        opacity: (!editingLine.selectedOldPlayerId || !editingLine.selectedNewPlayerId || editingLine.selectedOldPlayerId === editingLine.selectedNewPlayerId) ? 0.5 : 1,
+                                        minWidth: 120,
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
+                                >
+                                    <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#FFFFFF' }}>
+                                        {isSavingLine ? 'Salvataggio...' : 'Conferma Sostituzione ✓'}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        </TouchableOpacity>
+                    </TouchableOpacity>
+                </Modal>
             )}
         </View>
     );
