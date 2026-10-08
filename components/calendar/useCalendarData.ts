@@ -10,12 +10,14 @@ import {
     deleteField,
     subscribeToWorldLocations,
     WorldLocation,
+    checkAndAutoArchivePastTournaments,
 } from '../../services/firestore';
 import * as ImagePicker from 'expo-image-picker';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { storage } from '../../firebaseConfig';
 import { showAlert, showConfirmation } from '../../utils/alert';
 import { toLocalISOString } from './calendarUtils';
+import { resolveLocationCoordinates } from '../../utils/geocoding';
 
 export function useCalendarData(initialEditEventId?: string, onEditFound?: (event: Event) => void) {
     const [events, setEvents] = useState<Event[]>([]);
@@ -54,6 +56,8 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
 
     // Subscriptions
     useEffect(() => {
+        checkAndAutoArchivePastTournaments();
+
         const unsubscribe = subscribeToEvents((updatedEvents) => {
             setEvents(updatedEvents);
         });
@@ -184,25 +188,14 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
         setDetailModalVisible(true);
     };
 
-    const handleLocationChange = (val: string) => {
+    const handleLocationChange = async (val: string) => {
         setEventLocation(val);
         if (!val || !val.trim()) return;
-        const lowerVal = val.trim().toLowerCase();
-        const existingLoc = worldLocations.find(l =>
-            (l.locationName && l.locationName.toLowerCase() === lowerVal) ||
-            (l.title && l.title.toLowerCase() === lowerVal)
-        );
-        if (existingLoc) {
-            setEventLatitude(existingLoc.latitude);
-            setEventLongitude(existingLoc.longitude);
-            return;
-        }
-        const existingEvent = events.find(e =>
-            e.latitude && e.longitude && e.location && e.location.toLowerCase() === lowerVal
-        );
-        if (existingEvent) {
-            setEventLatitude(existingEvent.latitude);
-            setEventLongitude(existingEvent.longitude);
+        const coords = await resolveLocationCoordinates(val, [...worldLocations, ...events]);
+        if (coords) {
+            setEventLatitude(coords.latitude);
+            setEventLongitude(coords.longitude);
+            setEventShowOnMap(true);
         }
     };
 
@@ -240,6 +233,21 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
             return;
         }
 
+        let finalLat = eventLatitude;
+        let finalLng = eventLongitude;
+        let finalShowOnMap = eventShowOnMap;
+
+        if (eventLocation && (finalLat === undefined || finalLng === undefined)) {
+            const coords = await resolveLocationCoordinates(eventLocation, [...worldLocations, ...events]);
+            if (coords) {
+                finalLat = coords.latitude;
+                finalLng = coords.longitude;
+            }
+        }
+        if (finalLat !== undefined && finalLng !== undefined && eventLocation) {
+            finalShowOnMap = true;
+        }
+
         if (editingEvent) {
             showConfirmation(
                 'Conferma Modifica Evento',
@@ -253,9 +261,9 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
                             endDate: (eventEndDate || deleteField()) as any,
                             type: eventType,
                             location: (eventLocation || deleteField()) as any,
-                            latitude: (eventLatitude || deleteField()) as any,
-                            longitude: (eventLongitude || deleteField()) as any,
-                            showOnMap: eventLatitude && eventLongitude ? eventShowOnMap : false,
+                            latitude: (finalLat || deleteField()) as any,
+                            longitude: (finalLng || deleteField()) as any,
+                            showOnMap: finalLat && finalLng ? finalShowOnMap : false,
                             playerFee: (eventPlayerFee || deleteField()) as any,
                             teamFee: (eventTeamFee || deleteField()) as any,
                             additionalInfo: (eventAdditionalInfo || deleteField()) as any,
@@ -280,9 +288,9 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
                 endDate: eventEndDate || undefined,
                 type: eventType,
                 location: eventLocation,
-                latitude: eventLatitude,
-                longitude: eventLongitude,
-                showOnMap: eventLatitude && eventLongitude ? eventShowOnMap : false,
+                latitude: finalLat,
+                longitude: finalLng,
+                showOnMap: finalLat && finalLng ? finalShowOnMap : false,
                 playerFee: eventPlayerFee,
                 teamFee: eventTeamFee,
                 additionalInfo: eventAdditionalInfo,

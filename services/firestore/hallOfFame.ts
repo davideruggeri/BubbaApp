@@ -136,6 +136,95 @@ export const restoreEventFromHallOfFame = async (entry: HallOfFameEntry) => {
     }
 };
 
+let isAutoArchivingInProgress = false;
+
+export const checkAndAutoArchivePastTournaments = async (): Promise<void> => {
+    if (isAutoArchivingInProgress) return;
+    isAutoArchivingInProgress = true;
+    try {
+        const today = new Date().toISOString().split('T')[0];
+
+        // 1. Leggi eventi da 'calendario'
+        const calSnap = await getDocs(collection(db, 'calendario'));
+        const pastTournaments: (Event & { id: string })[] = [];
+
+        calSnap.docs.forEach(docSnap => {
+            const data = docSnap.data() as Event;
+            if (data.isArchived) return;
+
+            const t = (data.type || '').toLowerCase().trim();
+            const isTourn = t === 'tournament' || t === 'torneo' || t === 'championship' || t === 'campionato' || t === 'championship_season';
+            if (!isTourn) return;
+
+            const eventEnd = data.endDate || data.date || docSnap.id;
+            if (eventEnd && eventEnd < today) {
+                pastTournaments.push({ ...data, id: docSnap.id });
+            }
+        });
+
+        if (pastTournaments.length === 0) {
+            isAutoArchivingInProgress = false;
+            return;
+        }
+
+        // 2. Leggi Hall of Fame ('albo')
+        const alboSnap = await getDocs(collection(db, 'albo'));
+        const existingAlbo = alboSnap.docs.map(d => ({ id: d.id, ...d.data() } as HallOfFameEntry));
+
+        for (const ev of pastTournaments) {
+            const evTitle = (ev.title || '').trim().toLowerCase();
+            const evDate = ev.date || ev.id;
+
+            // Controlla se è già presente in albo
+            const alreadyInAlbo = existingAlbo.some(a => {
+                const aTitle = (a.title || '').trim().toLowerCase();
+                const aDate = a.date || (a.createdAt ? a.createdAt.split('T')[0] : '');
+                const titleMatch = aTitle === evTitle || aTitle.includes(evTitle) || evTitle.includes(aTitle);
+                const dateMatch = aDate === evDate || (a.dateDescription && a.dateDescription === (ev.season || ev.date));
+                return titleMatch && (dateMatch || Math.abs(new Date(aDate || 0).getTime() - new Date(evDate || 0).getTime()) < 14 * 24 * 60 * 60 * 1000);
+            });
+
+            if (alreadyInAlbo) {
+                try {
+                    await updateDoc(doc(db, 'calendario', ev.id), { isArchived: true });
+                } catch (err) {
+                    console.error(`Errore aggiornamento isArchived per ${ev.id}:`, err);
+                }
+            } else {
+                try {
+                    const rosterQuery = query(collection(db, 'roster'), where('eventId', '==', ev.id));
+                    const rosterSnap = await getDocs(rosterQuery);
+                    const roster = rosterSnap.docs.map(d => ({ id: d.id, ...d.data() } as RosterMember));
+
+                    const entry: Omit<HallOfFameEntry, 'id'> = {
+                        title: ev.title || 'Torneo',
+                        location: ev.location || (ev.surface ? (ev.surface === 'erba' ? 'Erba' : 'Sabbia') : 'Unknown'),
+                        dateDescription: ev.season || ev.date,
+                        date: ev.date || evDate,
+                        placement: (ev as any).placement || '-',
+                        awards: (ev as any).awards || [],
+                        roster,
+                        createdAt: new Date().toISOString(),
+                        latitude: ev.latitude,
+                        longitude: ev.longitude,
+                        images: ev.images || []
+                    };
+
+                    await addHallOfFameEntry(entry);
+                    await updateDoc(doc(db, 'calendario', ev.id), { isArchived: true });
+                    console.log(`Evento "${ev.title}" archiviato automaticamente in Hall of Fame.`);
+                } catch (err) {
+                    console.error(`Errore archiviazione automatica evento ${ev.id}:`, err);
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Errore durante checkAndAutoArchivePastTournaments:", error);
+    } finally {
+        isAutoArchivingInProgress = false;
+    }
+};
+
 // --- Roster ---
 
 export const getEventRoster = async (eventId: string): Promise<RosterMember[]> => {

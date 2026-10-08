@@ -58,6 +58,7 @@ const tagsToInject = `
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon.jpeg">
 <link rel="icon" href="/icon.jpeg">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <meta name="theme-color" content="#ffffff">
 `;
 

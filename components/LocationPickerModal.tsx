@@ -45,7 +45,7 @@ export default function LocationPickerModal({ visible, onClose, onSelect, theme,
                 </View>
 
                 {Platform.OS === 'web' ? (
-                    <WebMapPicker onSelect={handleWebClick} selectedCoord={selectedCoord} existingLocations={existingLocations} />
+                    <WebMapPicker onSelect={handleWebClick} selectedCoord={selectedCoord} existingLocations={existingLocations} isDark={theme.dark} />
                 ) : (
                     <View style={styles.center}>
                         <Text style={{ color: theme.colors.text }}>Map picker is only available on Web for now.</Text>
@@ -57,7 +57,7 @@ export default function LocationPickerModal({ visible, onClose, onSelect, theme,
     );
 }
 
-const WebMapPicker = ({ onSelect, selectedCoord, existingLocations }: any) => {
+const WebMapPicker = ({ onSelect, selectedCoord, existingLocations, isDark }: any) => {
     const [ReactLeaflet, setReactLeaflet] = useState<any>(null);
     const [Leaflet, setLeaflet] = useState<any>(null);
 
@@ -69,8 +69,10 @@ const WebMapPicker = ({ onSelect, selectedCoord, existingLocations }: any) => {
             import('leaflet'),
             import('react-leaflet')
         ]).then(([l, rl]) => {
-            setLeaflet(l);
-            setReactLeaflet(rl);
+            const LeafletInstance = (l as any)?.default || l;
+            const ReactLeafletInstance = (rl as any)?.default || rl;
+            setLeaflet(LeafletInstance);
+            setReactLeaflet(ReactLeafletInstance);
 
             // Helper to resolve asset URI
             const resolveAssetUri = (asset: any) => {
@@ -87,9 +89,9 @@ const WebMapPicker = ({ onSelect, selectedCoord, existingLocations }: any) => {
             const markerAsset = require('../assets/marker.png');
             const markerUri = resolveAssetUri(markerAsset);
 
-            if (markerUri) {
+            if (markerUri && LeafletInstance?.Icon) {
                 // Create custom icon
-                const icon = new l.Icon({
+                const icon = new LeafletInstance.Icon({
                     iconUrl: markerUri,
                     iconSize: [40, 40],
                     iconAnchor: [20, 40],
@@ -98,7 +100,7 @@ const WebMapPicker = ({ onSelect, selectedCoord, existingLocations }: any) => {
                 setCustomIcon(icon);
 
                 // Create existing location icon
-                const exIcon = new l.Icon({
+                const exIcon = new LeafletInstance.Icon({
                     iconUrl: markerUri,
                     iconSize: [30, 30],
                     iconAnchor: [15, 30],
@@ -107,12 +109,17 @@ const WebMapPicker = ({ onSelect, selectedCoord, existingLocations }: any) => {
                 });
                 setExistingIcon(exIcon);
             }
+        }).catch(err => {
+            console.error("Errore caricamento Leaflet in LocationPickerModal:", err);
         });
     }, []);
 
-    if (!ReactLeaflet || !Leaflet) return <View style={styles.center}><Text>Caricamento Mappa...</Text></View>;
+    const LeafletLib = Leaflet?.default || Leaflet;
+    const ReactLeafletLib = ReactLeaflet?.default || ReactLeaflet;
 
-    const { MapContainer, TileLayer, Marker: LMarker, useMapEvents } = ReactLeaflet;
+    if (!ReactLeafletLib || !LeafletLib || !ReactLeafletLib.MapContainer) return <View style={styles.center}><Text>Caricamento Mappa...</Text></View>;
+
+    const { MapContainer, TileLayer, Marker: LMarker, useMapEvents } = ReactLeafletLib;
 
     const MapEvents = () => {
         useMapEvents({
@@ -125,8 +132,11 @@ const WebMapPicker = ({ onSelect, selectedCoord, existingLocations }: any) => {
 
     return (
         // @ts-ignore
-        <MapContainer center={[41.9028, 12.4964]} zoom={5} style={{ height: '100%', width: '100%' }}>
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <MapContainer center={[41.9028, 12.4964]} zoom={5} style={{ height: '100%', width: '100%', backgroundColor: isDark ? '#1a1d21' : '#ddd' }}>
+            <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                className={isDark ? "dark-tiles" : ""}
+            />
             <MapEvents />
             {existingLocations && existingLocations.map((loc: any, index: number) => (
                 existingIcon && (

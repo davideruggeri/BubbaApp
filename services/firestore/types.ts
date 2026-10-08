@@ -123,6 +123,7 @@ export type HallOfFameEntry = {
     latitude?: number;
     longitude?: number;
     images?: string[];
+    description?: string;
 };
 
 export type MemberTournament = {

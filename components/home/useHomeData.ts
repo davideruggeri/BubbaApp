@@ -22,6 +22,7 @@ import {
     isWrappedWithinActivePeriod,
     isWrappedViewed,
     subscribeToSeasonPresenzeCounts,
+    checkAndAutoArchivePastTournaments,
 } from '../../services/firestore';
 
 export function useHomeData(stagioneCorrente: string, userProfile: any) {
@@ -141,6 +142,8 @@ export function useHomeData(stagioneCorrente: string, userProfile: any) {
 
     // 4. Subscriptions for Members, Albo, Calendar Events
     useEffect(() => {
+        checkAndAutoArchivePastTournaments();
+
         const unsubscribeMembers = subscribeToMembers(members => {
             setAllMembers(members);
         });

@@ -659,3 +659,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
 		print-color-adjust: exact;
 		}
 	}
+
+/* Dark Mode Tiles */
+.dark-tiles .leaflet-tile,
+.dark-tiles img,
+.leaflet-tile.dark-tiles {
+	filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%) !important;
+}
