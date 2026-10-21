@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { MatchAnalysis, Member, Event } from '../../services/firestore/types';
-import { subscribeToMatchAnalysis, deleteMatchAnalysis, updateMatchAnalysis } from '../../services/firestore/matchAnalysis';
+import { MatchAnalysis, Member, Event, MatchRosterPlayer } from '../../services/firestore/types';
+import { subscribeToMatchAnalysis, deleteMatchAnalysis, updateMatchAnalysis, addMatchAnalysis } from '../../services/firestore/matchAnalysis';
 import { subscribeToMembers } from '../../services/firestore/members';
 import { subscribeToEvents } from '../../services/firestore/calendar';
 import { derive, playerStats } from '../../utils/statsEngine';
@@ -32,6 +32,9 @@ export function useTournamentDetailData(tournamentName: string) {
 
     // Gestione Riordino Manuale Partite Torneo
     const [reorderModalVisible, setReorderModalVisible] = useState<boolean>(false);
+
+    // Gestione Creazione Nuova Partita nel Torneo
+    const [createMatchModalVisible, setCreateMatchModalVisible] = useState<boolean>(false);
 
     useEffect(() => {
         const unsubMatches = subscribeToMatchAnalysis(setAllMatches);
@@ -314,6 +317,61 @@ export function useTournamentDetailData(tournamentName: string) {
         return result;
     }, [selectedPlayerForDetail, tournamentMatches]);
 
+    // Il roster dell'ultima partita del torneo, da copiare nelle nuove partite
+    const latestTournamentRoster = useMemo<MatchRosterPlayer[]>(() => {
+        if (!tournamentMatches.length) return [];
+        const last = tournamentMatches[tournamentMatches.length - 1];
+        return last.customRoster || [];
+    }, [tournamentMatches]);
+
+    // La superficie del torneo: da evento collegato o dalla partita più recente
+    const tournamentSurface = useMemo<'sabbia' | 'erba'>(() => {
+        if (tournamentEvent?.surface === 'sabbia' || tournamentEvent?.surface === 'erba') {
+            return tournamentEvent.surface;
+        }
+        if (tournamentMatches.length) {
+            return tournamentMatches[tournamentMatches.length - 1].surface || 'erba';
+        }
+        return 'erba';
+    }, [tournamentEvent, tournamentMatches]);
+
+    const handleCreateTournamentMatch = async (data: {
+        opponent: string;
+        date: string;
+        firstRatio: 'M' | 'F';
+        pullFirst: 'us' | 'them';
+        dir0: 'R' | 'L';
+        customRoster: MatchRosterPlayer[];
+    }) => {
+        try {
+            const eventId = tournamentEvent?.id && !tournamentEvent.id.startsWith('existing_')
+                ? tournamentEvent.id
+                : null;
+            await addMatchAnalysis({
+                opponent: data.opponent,
+                surface: tournamentSurface,
+                date: data.date,
+                pullFirst: data.pullFirst,
+                firstRatio: data.firstRatio,
+                dir0: data.dir0,
+                isSingleMatch: false,
+                eventId,
+                eventName: tournamentName,
+                targetScore: tournamentSurface === 'sabbia' ? 13 : 15,
+                customRoster: data.customRoster,
+                division: 'mixed',
+                startingGender: data.firstRatio,
+                events: [],
+                ourScore: 0,
+                theirScore: 0,
+                status: 'live',
+                orderIndex: tournamentMatches.length,
+            } as any);
+        } catch {
+            showAlert('Errore', 'Impossibile creare la partita.');
+        }
+    };
+
     const handleSaveMatchesOrder = async (orderedMatches: MatchAnalysis[]) => {
         try {
             for (let i = 0; i < orderedMatches.length; i++) {
@@ -366,5 +424,11 @@ export function useTournamentDetailData(tournamentName: string) {
         reorderModalVisible,
         setReorderModalVisible,
         handleSaveMatchesOrder,
+        // Creazione Nuova Partita
+        createMatchModalVisible,
+        setCreateMatchModalVisible,
+        latestTournamentRoster,
+        tournamentSurface,
+        handleCreateTournamentMatch,
     };
 }

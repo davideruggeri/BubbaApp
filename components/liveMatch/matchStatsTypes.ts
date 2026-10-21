@@ -43,4 +43,6 @@ export interface MatchStatsViewProps {
     onUpdateTurnoverEvent?: (eventIndex: number, updatedFields: any) => Promise<void>;
     onUpdateGoalEvent?: (eventIndex: number, updated: { s?: string | null; a?: string | null }) => Promise<void>;
     onUpdatePointLine?: (pointNumber: number, oldPlayerId: string, newPlayerId: string) => Promise<void>;
+    onInsertTouches?: (beforeRawEventIndex: number, playerIds: string[]) => Promise<void>;
+    onInsertTouchPhases?: (phases: Array<{ beforeRawEventIndex: number; playerIds: string[] }>) => Promise<void>;
 }

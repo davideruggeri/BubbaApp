@@ -363,6 +363,7 @@ export interface WorldLocation {
     date: string;
     images: string[];
     locationName: string;
+    isCurifSticker?: boolean;
 }
 
 export interface UserWrappedData {

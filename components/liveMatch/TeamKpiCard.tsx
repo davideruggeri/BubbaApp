@@ -69,7 +69,7 @@ export const TeamKpiCard: React.FC<TeamKpiCardProps> = React.memo(({ tStats, isM
                         {tStats.breaks}/{tStats.breakChances} {tStats.breakChances > 0 ? <Text style={{ fontSize: 11, color: '#1F6FD1' }}>({breakEffPct}%)</Text> : null}
                     </Text>
                     <Text style={[styles.kpiLbl, { color: theme.colors.textSecondary }]}>
-                        Break conv. / occasioni (difese + err. loro: {tStats.toThem})
+                        Conv./occasioni · TO loro: {tStats.toThem}
                     </Text>
                 </View>
 

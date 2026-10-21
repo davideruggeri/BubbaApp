@@ -10,103 +10,100 @@ interface ScoreboardHeaderProps {
     opponent: string;
     scoreUs: number;
     scoreThem: number;
+    targetScore: number;
     isCompleted: boolean;
     activeTab: 'play' | 'stats';
     onTabChange: (tab: 'play' | 'stats') => void;
     isStaff: boolean;
     canEdit: boolean;
     rosterCount: number;
-    onExportExcel: () => void;
-    onOpenTouches: () => void;
     onOpenRoster: () => void;
-    onUndo: () => void;
     onToggleDone: () => void;
     onBack: () => void;
     isMobile: boolean;
+    isLiveMode?: boolean;
+    onToggleLiveMode?: () => void;
 }
 
 export const ScoreboardHeader: React.FC<ScoreboardHeaderProps> = React.memo(({
     opponent,
     scoreUs,
     scoreThem,
+    targetScore,
     isCompleted,
     activeTab,
     onTabChange,
     isStaff,
     canEdit,
     rosterCount,
-    onExportExcel,
-    onOpenTouches,
     onOpenRoster,
-    onUndo,
     onToggleDone,
     onBack,
-    isMobile
+    isMobile,
+    isLiveMode,
+    onToggleLiveMode,
 }) => {
     const { theme } = useTheme();
+
+    // Termina appare solo se nessuno ha ancora raggiunto il punteggio target
+    const matchReachedTarget = scoreUs >= targetScore || scoreThem >= targetScore;
+    const showTermina = isStaff && canEdit && !isCompleted && !matchReachedTarget;
+    const showRiapri = isStaff && isCompleted;
 
     return (
         <View style={[styles.matchHeader, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border }]}>
             <ScreenTitle
                 title={`vs ${opponent}`}
                 onBack={onBack}
-                containerStyle={{ marginBottom: 4 }}
+                containerStyle={{ marginBottom: 2 }}
             />
 
-            {/* Azioni Rapide Admin/Staff */}
-            <View style={styles.headerActionsRow}>
-                <TouchableOpacity
-                    style={[styles.headerBtn, { backgroundColor: '#2E8540' }, isMobile && styles.headerBtnMobile]}
-                    onPress={onExportExcel}
-                    activeOpacity={0.8}
-                >
-                    <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]}>📊 Excel</Text>
-                </TouchableOpacity>
+            {/* Azioni header: solo Roster + Termina/Riapri */}
+            {isStaff && (
+                <View style={styles.headerActionsRow}>
+                    <TouchableOpacity
+                        style={[styles.headerBtn, { backgroundColor: '#003057' }]}
+                        onPress={onOpenRoster}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={styles.headerBtnText} numberOfLines={1}>
+                            👥 {rosterCount}
+                        </Text>
+                    </TouchableOpacity>
 
-                {isStaff && (
-                    <>
+                    {onToggleLiveMode && !isCompleted && (
                         <TouchableOpacity
-                            style={[styles.headerBtn, { backgroundColor: '#E07A1F' }, isMobile && styles.headerBtnMobile]}
-                            onPress={onOpenTouches}
+                            style={[styles.headerBtn, { backgroundColor: isLiveMode ? '#C0D725' : '#475569' }]}
+                            onPress={onToggleLiveMode}
                             activeOpacity={0.8}
                         >
-                            <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]} numberOfLines={1}>
-                                🥏 Tocchi
+                            <Text style={[styles.headerBtnText, { color: isLiveMode ? '#1A2600' : '#fff' }]} numberOfLines={1}>
+                                {isLiveMode ? '⚡ Live' : '📹 Video'}
                             </Text>
                         </TouchableOpacity>
+                    )}
 
+                    {showTermina && (
                         <TouchableOpacity
-                            style={[styles.headerBtn, { backgroundColor: '#003057' }, isMobile && styles.headerBtnMobile]}
-                            onPress={onOpenRoster}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]} numberOfLines={1}>
-                                👥 Roster ({rosterCount})
-                            </Text>
-                        </TouchableOpacity>
-
-                        {canEdit && (
-                            <TouchableOpacity
-                                style={[styles.headerBtn, { backgroundColor: '#5B6570' }, isMobile && styles.headerBtnMobile]}
-                                onPress={onUndo}
-                                activeOpacity={0.8}
-                            >
-                                <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]}>↩ Annulla</Text>
-                            </TouchableOpacity>
-                        )}
-
-                        <TouchableOpacity
-                            style={[styles.headerBtn, { backgroundColor: isCompleted ? '#003057' : '#C8323C' }, isMobile && styles.headerBtnMobile]}
+                            style={[styles.headerBtn, { backgroundColor: '#C8323C', flex: 1 }]}
                             onPress={onToggleDone}
                             activeOpacity={0.8}
                         >
-                            <Text style={[styles.headerBtnText, isMobile && styles.headerBtnTextMobile]}>
-                                {isCompleted ? '🔓 Riapri' : '🏁 Termina'}
-                            </Text>
+                            <Text style={styles.headerBtnText}>🏁 Termina partita</Text>
                         </TouchableOpacity>
-                    </>
-                )}
-            </View>
+                    )}
+
+                    {showRiapri && (
+                        <TouchableOpacity
+                            style={[styles.headerBtn, { backgroundColor: '#5B6570', flex: 1 }]}
+                            onPress={onToggleDone}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={styles.headerBtnText}>🔓 Riapri partita</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+            )}
 
             {/* Punteggio Gigante */}
             <View style={styles.scoreRow}>
@@ -153,10 +150,9 @@ const styles = StyleSheet.create({
     },
     headerActionsRow: {
         flexDirection: 'row',
-        gap: 6,
-        justifyContent: 'center',
-        flexWrap: 'wrap',
-        marginBottom: 8,
+        gap: 8,
+        marginBottom: 6,
+        alignItems: 'center',
     },
     headerBtn: {
         paddingHorizontal: 12,
@@ -165,23 +161,16 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    headerBtnMobile: {
-        paddingHorizontal: 8,
-        paddingVertical: 6,
-    },
     headerBtnText: {
         color: '#fff',
         fontWeight: 'bold',
-        fontSize: 13,
-    },
-    headerBtnTextMobile: {
-        fontSize: 11,
+        fontSize: 12,
     },
     scoreRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 6,
+        paddingVertical: 4,
     },
     teamScore: {
         alignItems: 'center',
@@ -195,14 +184,14 @@ const styles = StyleSheet.create({
         marginBottom: 2,
     },
     scoreValue: {
-        fontSize: 48,
+        fontSize: 38,
         fontWeight: '900',
-        lineHeight: 52,
+        lineHeight: 44,
     },
     scoreDivider: {
-        fontSize: 36,
+        fontSize: 28,
         fontWeight: '300',
-        marginHorizontal: 16,
+        marginHorizontal: 12,
     },
     tabBar: {
         flexDirection: 'row',
@@ -219,7 +208,7 @@ const styles = StyleSheet.create({
         borderBottomColor: '#003057',
     },
     tabText: {
-        fontSize: 13,
+        fontSize: 11,
         fontWeight: 'bold',
         color: '#8A9BA8',
     },

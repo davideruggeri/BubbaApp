@@ -311,14 +311,14 @@ export default function AnalisiPartitaScreen() {
                         onPress={handleExportTournamentXLSX}
                         activeOpacity={0.8}
                     >
-                        <Text style={styles.actionChipText}>📊 Esporta Excel Torneo</Text>
+                        <Text style={styles.actionChipText}>📊 Excel Torneo</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.actionChip, { backgroundColor: theme.colors.primary }]}
                         onPress={handleImportFile}
                         activeOpacity={0.8}
                     >
-                        <Text style={styles.actionChipText}>📥 Importa Partite (Excel/JSON)</Text>
+                        <Text style={styles.actionChipText}>📥 Importa File</Text>
                     </TouchableOpacity>
                 </View>
             )}

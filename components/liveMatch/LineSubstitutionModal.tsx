@@ -2,7 +2,7 @@
 // Modale per la sostituzione dei giocatori in campo durante il punto (infortunio o correzione errore iniziale)
 
 import React from 'react';
-import { View, Text, Modal, TouchableOpacity } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView } from 'react-native';
 import { styles } from './liveMatchStyles';
 import { useTheme } from '../../context/ThemeContext';
 import { MatchRosterPlayer } from '../../services/firestore';
@@ -63,47 +63,50 @@ export default function LineSubstitutionModal({
                                 Seleziona i 5 giocatori che devono risultare in campo per questo punto.
                             </Text>
 
-                            <View style={styles.playerGrid}>
-                                {matchRoster.map(p => {
-                                    const isSel = lineSel.includes(p.id);
-                                    return (
-                                        <TouchableOpacity
-                                            key={p.id}
-                                            style={[
-                                                styles.pbtn,
-                                                isSel && styles.pbtnSel,
-                                                {
-                                                    backgroundColor: isSel
-                                                        ? (theme.dark ? '#1E3A5F' : '#E3ECF5')
-                                                        : theme.colors.card,
-                                                    borderColor: isSel
-                                                        ? (theme.dark ? '#38BDF8' : '#003057')
-                                                        : theme.colors.border,
-                                                }
-                                            ]}
-                                            onPress={() => {
-                                                setLineSel(prev => (prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]));
-                                            }}
-                                        >
-                                            <View style={{ paddingRight: 24, flex: 1 }}>
-                                                <Text
-                                                    style={[
-                                                        styles.pbtnName,
-                                                        { color: isSel && !theme.dark ? '#003057' : theme.colors.text }
-                                                    ]}
-                                                    numberOfLines={1}
-                                                    ellipsizeMode="tail"
-                                                >
-                                                    {p.name}
-                                                </Text>
-                                            </View>
-                                            <View style={[styles.genderBadge, { backgroundColor: p.g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
-                                                <Text style={styles.genderText}>{p.g}</Text>
-                                            </View>
-                                        </TouchableOpacity>
-                                    );
-                                })}
-                            </View>
+                            <ScrollView style={{ maxHeight: 280 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                                <View style={styles.playerGrid}>
+                                    {matchRoster.map(p => {
+                                        const isSel = lineSel.includes(p.id);
+                                        return (
+                                            <TouchableOpacity
+                                                key={p.id}
+                                                style={[
+                                                    styles.pbtn,
+                                                    styles.pbtnMobile,
+                                                    isSel && styles.pbtnSel,
+                                                    {
+                                                        backgroundColor: isSel
+                                                            ? (theme.dark ? '#1E3A5F' : '#E3ECF5')
+                                                            : theme.colors.card,
+                                                        borderColor: isSel
+                                                            ? (theme.dark ? '#38BDF8' : '#003057')
+                                                            : theme.colors.border,
+                                                    }
+                                                ]}
+                                                onPress={() => {
+                                                    setLineSel(prev => (prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]));
+                                                }}
+                                            >
+                                                <View style={{ paddingRight: 24, flex: 1 }}>
+                                                    <Text
+                                                        style={[
+                                                            styles.pbtnName,
+                                                            { color: isSel && !theme.dark ? '#003057' : theme.colors.text }
+                                                        ]}
+                                                        numberOfLines={1}
+                                                        ellipsizeMode="tail"
+                                                    >
+                                                        {p.name}
+                                                    </Text>
+                                                </View>
+                                                <View style={[styles.genderBadge, { backgroundColor: p.g === 'F' ? '#B8338A' : '#1F6FD1' }]}>
+                                                    <Text style={styles.genderText}>{p.g}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </ScrollView>
 
                             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
                                 <TouchableOpacity

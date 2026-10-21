@@ -19,6 +19,8 @@ interface CompletedMatchSummaryProps {
     onOpenRoster: () => void;
     onToggleDone: () => void;
     onOpenStats: () => void;
+    onExportExcel?: () => void;
+    onOpenTouches?: () => void;
 }
 
 export const CompletedMatchSummary: React.FC<CompletedMatchSummaryProps> = React.memo(({
@@ -35,6 +37,8 @@ export const CompletedMatchSummary: React.FC<CompletedMatchSummaryProps> = React
     onOpenRoster,
     onToggleDone,
     onOpenStats,
+    onExportExcel,
+    onOpenTouches,
 }) => {
     const { theme } = useTheme();
 
@@ -56,7 +60,12 @@ export const CompletedMatchSummary: React.FC<CompletedMatchSummaryProps> = React
                 <Text style={{ fontSize: 13, color: theme.colors.textSecondary, marginBottom: 4 }}>
                     RISULTATO FINALE
                 </Text>
-                <Text style={{ fontSize: 32, fontWeight: '900', color: theme.colors.text }}>
+                <Text
+                    style={{ fontSize: 24, fontWeight: '900', color: theme.colors.text, textAlign: 'center' }}
+                    numberOfLines={2}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                >
                     BUBBA {scoreUs} – {scoreThem} {opponent.toUpperCase()}
                 </Text>
                 <Text style={{ fontSize: 12, color: theme.colors.textSecondary, marginTop: 4 }}>
@@ -84,44 +93,43 @@ export const CompletedMatchSummary: React.FC<CompletedMatchSummaryProps> = React
                 </View>
             </View>
 
-            {/* Banner Azioni Bloccate */}
-            <View style={[styles.lockedBanner, { backgroundColor: '#ECEFF1', borderColor: '#B0BEC5', marginHorizontal: 0, marginTop: 0 }]}>
-                <Text style={styles.lockedTitle}>🔒 REGISTRAZIONE EVENTI BLOCCATA</Text>
-                <Text style={styles.lockedSub}>
-                    La partita è chiusa. La selezione della linea e l'avvio di ulteriori punti sono disabilitati.
-                </Text>
-                {isStaff && (
-                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            {/* Azioni a partita conclusa */}
+            {isStaff && (
+                <View style={{ gap: 8 }}>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {onExportExcel && (
+                            <TouchableOpacity
+                                style={{ flex: 1, backgroundColor: '#2E8540', paddingVertical: 11, borderRadius: 8, alignItems: 'center' }}
+                                onPress={onExportExcel}
+                            >
+                                <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>📊 Esporta Excel</Text>
+                            </TouchableOpacity>
+                        )}
+                        {onOpenTouches && (
+                            <TouchableOpacity
+                                style={{ flex: 1, backgroundColor: '#E07A1F', paddingVertical: 11, borderRadius: 8, alignItems: 'center' }}
+                                onPress={onOpenTouches}
+                            >
+                                <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>🥏 Modifica Tocchi</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
                         <TouchableOpacity
-                            style={{
-                                backgroundColor: '#003057',
-                                paddingHorizontal: 12,
-                                paddingVertical: 7,
-                                borderRadius: 6
-                            }}
+                            style={{ flex: 1, backgroundColor: '#003057', paddingVertical: 11, borderRadius: 8, alignItems: 'center' }}
                             onPress={onOpenRoster}
                         >
-                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
-                                👥 Convocati & Roster
-                            </Text>
+                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>👥 Convocati & Roster</Text>
                         </TouchableOpacity>
-
                         <TouchableOpacity
-                            style={{
-                                backgroundColor: '#5B6570',
-                                paddingHorizontal: 12,
-                                paddingVertical: 7,
-                                borderRadius: 6
-                            }}
+                            style={{ flex: 1, backgroundColor: '#5B6570', paddingVertical: 11, borderRadius: 8, alignItems: 'center' }}
                             onPress={onToggleDone}
                         >
-                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
-                                🔓 Riapri Partita
-                            </Text>
+                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>🔓 Riapri Partita</Text>
                         </TouchableOpacity>
                     </View>
-                )}
-            </View>
+                </View>
+            )}
 
             {/* Pulsante rapido statistiche */}
             <TouchableOpacity

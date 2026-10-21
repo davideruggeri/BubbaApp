@@ -108,28 +108,28 @@ export const TournamentMatchCard: React.FC<TournamentMatchCardProps> = ({
                         style={styles.actionButton}
                         onPress={() => onEditTouches(item)}
                     >
-                        <Text style={{ color: '#E07A1F', fontWeight: '600' }}>🥏 Tocchi</Text>
+                        <Text style={{ color: '#E07A1F', fontWeight: '600', fontSize: 11 }} numberOfLines={1}>🥏 Tocchi</Text>
                     </TouchableOpacity>
                     <View style={[styles.separator, { backgroundColor: theme.colors.border }]} />
                     <TouchableOpacity
                         style={styles.actionButton}
                         onPress={() => onEditDate(item)}
                     >
-                        <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>📅 Data</Text>
+                        <Text style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 11 }} numberOfLines={1}>📅 Data</Text>
                     </TouchableOpacity>
                     <View style={[styles.separator, { backgroundColor: theme.colors.border }]} />
                     <TouchableOpacity
                         style={styles.actionButton}
                         onPress={() => exportAndDownloadXLSX([item], playerMap)}
                     >
-                        <Text style={{ color: '#2E8540', fontWeight: '600' }}>📊 Excel Partita</Text>
+                        <Text style={{ color: '#2E8540', fontWeight: '600', fontSize: 11 }} numberOfLines={1}>📊 Excel</Text>
                     </TouchableOpacity>
                     <View style={[styles.separator, { backgroundColor: theme.colors.border }]} />
                     <TouchableOpacity
                         style={styles.actionButton}
                         onPress={() => onDeleteMatch(item.id)}
                     >
-                        <Text style={{ color: theme.colors.danger, fontWeight: '600' }}>Elimina</Text>
+                        <Text style={{ color: theme.colors.danger, fontWeight: '600', fontSize: 11 }} numberOfLines={1}>🗑 Elimina</Text>
                     </TouchableOpacity>
                 </View>
             )}

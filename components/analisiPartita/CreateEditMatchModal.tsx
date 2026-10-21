@@ -5,7 +5,9 @@ import {
     Modal,
     ScrollView,
     TouchableOpacity,
-    TextInput
+    TextInput,
+    KeyboardAvoidingView,
+    Platform
 } from 'react-native';
 import { Event, Member, MatchRosterPlayer } from '../../services/firestore';
 import { getEventDays, formatTournamentDay, formatDate } from './analisiPartitaUtils';
@@ -98,9 +100,18 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
 
     return (
         <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+            <KeyboardAvoidingView
+                style={{ flex: 1 }}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+            >
             <View style={styles.modalOverlay}>
                 <View style={[styles.modalContent, { backgroundColor: theme.colors.card }]}>
-                    <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
+                    <ScrollView
+                        contentContainerStyle={{ paddingBottom: 16 }}
+                        keyboardShouldPersistTaps="handled"
+                        showsVerticalScrollIndicator={false}
+                    >
                         <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
                             {editingMatchId ? 'Modifica Partita' : 'Nuova Partita'}
                         </Text>
@@ -132,7 +143,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setIsSingleMatch(true)}
                             >
                                 <Text style={[styles.segmentText, isSingleMatch && styles.segmentTextActive]}>
-                                    Partita Singola
+                                    Singola
                                 </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -140,7 +151,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setIsSingleMatch(false)}
                             >
                                 <Text style={[styles.segmentText, !isSingleMatch && styles.segmentTextActive]}>
-                                    Torneo / Campionato
+                                    Torneo / Camp.
                                 </Text>
                             </TouchableOpacity>
                         </View>
@@ -265,7 +276,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setPullFirst('us')}
                             >
                                 <Text style={[styles.segmentText, pullFirst === 'us' && styles.segmentTextActive]}>
-                                    Noi (Difesa)
+                                    🛡 Noi
                                 </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -273,7 +284,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setPullFirst('them')}
                             >
                                 <Text style={[styles.segmentText, pullFirst === 'them' && styles.segmentTextActive]}>
-                                    Loro (Attacco)
+                                    ⚔️ Loro
                                 </Text>
                             </TouchableOpacity>
                         </View>
@@ -286,7 +297,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setFirstRatio('F')}
                             >
                                 <Text style={[styles.segmentText, firstRatio === 'F' && styles.segmentTextActive]}>
-                                    3 Donne / 2 Uomini
+                                    3F / 2M
                                 </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -294,7 +305,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setFirstRatio('M')}
                             >
                                 <Text style={[styles.segmentText, firstRatio === 'M' && styles.segmentTextActive]}>
-                                    3 Uomini / 2 Donne
+                                    3M / 2F
                                 </Text>
                             </TouchableOpacity>
                         </View>
@@ -307,7 +318,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setDir0('R')}
                             >
                                 <Text style={[styles.segmentText, dir0 === 'R' && styles.segmentTextActive]}>
-                                    Verso Destra ▶
+                                    Destra ▶
                                 </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -315,7 +326,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                 onPress={() => setDir0('L')}
                             >
                                 <Text style={[styles.segmentText, dir0 === 'L' && styles.segmentTextActive]}>
-                                    ◀ Verso Sinistra
+                                    ◀ Sinistra
                                 </Text>
                             </TouchableOpacity>
                         </View>
@@ -460,7 +471,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                                     <Text style={{ fontSize: 11, fontWeight: 'bold', color: theme.colors.text, marginBottom: 4 }}>
                                                         Giocatori Convocati ({selectedRoster.length}):
                                                     </Text>
-                                                    <ScrollView style={{ maxHeight: 130 }} nestedScrollEnabled>
+                                                    <ScrollView style={{ maxHeight: 110 }} nestedScrollEnabled>
                                                         <View style={{ gap: 4 }}>
                                                             {selectedRoster.map(p => {
                                                                 const isGuestOrImported = p.id.startsWith('guest_') || p.id.startsWith('imported_') || (p as any).isGuest;
@@ -615,7 +626,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                                             </View>
 
                                             {/* Lista Membri con Spunte */}
-                                            <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled>
+                                            <ScrollView style={{ maxHeight: 120 }} nestedScrollEnabled>
                                                 <View style={{ gap: 4 }}>
                                                     {allMembers.map(m => {
                                                         const mGender: 'M' | 'F' = m.gender === 'F' ? 'F' : 'M';
@@ -676,6 +687,7 @@ export const CreateEditMatchModal: React.FC<CreateEditMatchModalProps> = ({
                     </ScrollView>
                 </View>
             </View>
+            </KeyboardAvoidingView>
         </Modal>
     );
 };

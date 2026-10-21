@@ -20,6 +20,7 @@ import {
     LinkTournamentModal,
     TournamentPlayerDetailModal,
     ReorderTournamentMatchesModal,
+    CreateTournamentMatchModal,
 } from '../components/tournamentDetail';
 
 type TournamentDetailRouteProp = RouteProp<RootStackParamList, 'TournamentDetail'>;
@@ -69,6 +70,11 @@ export default function TournamentDetailScreen() {
         reorderModalVisible,
         setReorderModalVisible,
         handleSaveMatchesOrder,
+        createMatchModalVisible,
+        setCreateMatchModalVisible,
+        latestTournamentRoster,
+        tournamentSurface,
+        handleCreateTournamentMatch,
     } = useTournamentDetailData(tournamentName);
 
     return (
@@ -81,12 +87,21 @@ export default function TournamentDetailScreen() {
             {/* Quick Action / Stats Bar */}
             <View style={[styles.actionBar, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border }]}>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {isStaff && (
+                        <TouchableOpacity
+                            style={[styles.actionChip, { backgroundColor: '#003057', flex: 1 }]}
+                            onPress={() => setCreateMatchModalVisible(true)}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={styles.actionChipText}>➕ Nuova Partita</Text>
+                        </TouchableOpacity>
+                    )}
                     <TouchableOpacity
                         style={[styles.actionChip, { backgroundColor: '#2E8540', flex: 1 }]}
                         onPress={handleExportExcel}
                         activeOpacity={0.8}
                     >
-                        <Text style={styles.actionChipText}>📊 Esporta Excel Torneo</Text>
+                        <Text style={styles.actionChipText}>📊 Esporta Excel</Text>
                     </TouchableOpacity>
                     {tournamentMatches.length > 1 && (
                         <TouchableOpacity
@@ -373,6 +388,20 @@ export default function TournamentDetailScreen() {
                 theme={theme}
                 onClose={() => setReorderModalVisible(false)}
                 onSave={handleSaveMatchesOrder}
+            />
+
+            {/* Modal Creazione Nuova Partita nel Torneo */}
+            <CreateTournamentMatchModal
+                visible={createMatchModalVisible}
+                tournamentName={tournamentName}
+                tournamentDays={tournamentDays}
+                surface={tournamentSurface}
+                latestRoster={latestTournamentRoster}
+                onClose={() => setCreateMatchModalVisible(false)}
+                onCreate={async data => {
+                    await handleCreateTournamentMatch(data);
+                    setCreateMatchModalVisible(false);
+                }}
             />
         </SafeAreaView>
     );

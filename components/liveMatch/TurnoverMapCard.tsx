@@ -223,15 +223,13 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
 
     return (
         <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View>
-                    <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 2 }]}>
-                        Mappa Turnover & Difese
-                    </Text>
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
-                        Totale: {totalLocEvents} ({toUsCount} TO nostri · {toThemCount} TO avversari)
-                    </Text>
-                </View>
+            <View>
+                <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 2 }]}>
+                    Mappa Turnover & Difese
+                </Text>
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
+                    Totale: {totalLocEvents} ({toUsCount} TO nostri · {toThemCount} TO avversari)
+                </Text>
             </View>
 
             {/* Filtri e Legenda */}

@@ -53,7 +53,7 @@ export const analisiPartitaStyles = StyleSheet.create({
     actionChipText: {
         color: '#fff',
         fontWeight: 'bold',
-        fontSize: 12,
+        fontSize: 11,
         textAlign: 'center',
     },
     listContent: {
@@ -111,7 +111,7 @@ export const analisiPartitaStyles = StyleSheet.create({
         alignItems: 'center',
     },
     opponentText: {
-        fontSize: 18,
+        fontSize: 15,
         fontWeight: 'bold',
         marginBottom: 4,
     },
@@ -138,7 +138,7 @@ export const analisiPartitaStyles = StyleSheet.create({
         justifyContent: 'center',
     },
     scoreText: {
-        fontSize: 26,
+        fontSize: 22,
         fontWeight: '900',
     },
     scoreSubText: {
@@ -193,8 +193,8 @@ export const analisiPartitaStyles = StyleSheet.create({
         width: '100%',
         maxWidth: 500,
         borderRadius: 16,
-        padding: 20,
-        maxHeight: '90%',
+        padding: 14,
+        maxHeight: '92%',
     },
     modalTitle: {
         fontSize: 20,
@@ -203,10 +203,10 @@ export const analisiPartitaStyles = StyleSheet.create({
         textAlign: 'center',
     },
     label: {
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 'bold',
-        marginTop: 12,
-        marginBottom: 6,
+        marginTop: 10,
+        marginBottom: 4,
         textTransform: 'uppercase',
     },
     input: {
@@ -230,8 +230,8 @@ export const analisiPartitaStyles = StyleSheet.create({
     },
     segmentBtn: {
         flex: 1,
-        minWidth: 130,
-        paddingVertical: 10,
+        minWidth: 80,
+        paddingVertical: 9,
         borderRadius: 10,
         borderWidth: 1,
         borderColor: '#ccc',

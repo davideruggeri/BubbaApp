@@ -83,13 +83,11 @@ export const PullMapCard: React.FC<PullMapCardProps> = ({
 
     return (
         <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View>
-                    <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 2 }]}>Mappa Pull</Text>
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
-                        Totale: {totalPulls} ({usPulls} nostri · {themPulls} avversari) · Tocca un pallino per dettagli o modifica
-                    </Text>
-                </View>
+            <View>
+                <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 2 }]}>Mappa Pull</Text>
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
+                    Totale: {totalPulls} ({usPulls} nostri · {themPulls} avversari) · Tocca un pallino per dettagli
+                </Text>
             </View>
 
             {/* Filtri e Legenda */}

@@ -301,10 +301,6 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
             showAlert('Permesso negato', 'Solo lo staff può modificare gli eventi.');
             return;
         }
-        if (isCompleted) {
-            showAlert('Partita Terminata', "Tocca prima 'Riapri' in alto per poter modificare le azioni della partita.");
-            return;
-        }
         if (!match.events || eventIndex < 0 || eventIndex >= match.events.length) {
             showAlert('Errore', 'Evento pull non trovato.');
             return;
@@ -348,10 +344,6 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
             showAlert('Permesso negato', 'Solo lo staff può modificare gli eventi.');
             return;
         }
-        if (isCompleted) {
-            showAlert('Partita Terminata', "Tocca prima 'Riapri' in alto per poter modificare le azioni della partita.");
-            return;
-        }
         if (!match.events || eventIndex < 0 || eventIndex >= match.events.length) {
             showAlert('Errore', 'Evento non trovato.');
             return;
@@ -388,10 +380,6 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
     ) => {
         if (!isStaff) {
             showAlert('Permesso negato', 'Solo lo staff può modificare gli eventi.');
-            return;
-        }
-        if (isCompleted) {
-            showAlert('Partita Terminata', "Tocca prima 'Riapri' in alto per poter modificare le azioni della partita.");
             return;
         }
         if (!match.events || eventIndex < 0 || eventIndex >= match.events.length) {
@@ -484,8 +472,68 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
         }
     };
 
+    const handleInsertTouches = async (beforeRawEventIndex: number, playerIds: string[]) => {
+        if (!isStaff) {
+            showAlert('Permesso negato', 'Solo lo staff può modificare gli eventi.');
+            return;
+        }
+        if (!match.events || beforeRawEventIndex < 0 || beforeRawEventIndex > match.events.length) {
+            showAlert('Errore', 'Posizione inserimento non valida.');
+            return;
+        }
+        if (!playerIds.length) return;
+
+        const currentEvents = [...match.events];
+        const touchEvents = playerIds.map(pid => ({ k: 'touch' as const, p: pid }));
+        currentEvents.splice(beforeRawEventIndex, 0, ...touchEvents);
+
+        const newDerive = derive({ pullFirst: match.pullFirst, events: currentEvents });
+        try {
+            await updateMatchAnalysis({
+                id: match.id,
+                events: currentEvents,
+                ourScore: newDerive.score.us,
+                theirScore: newDerive.score.them,
+            });
+        } catch {
+            showAlert('Errore', 'Impossibile inserire i tocchi.');
+        }
+    };
+
+    const handleInsertTouchPhases = async (phases: Array<{ beforeRawEventIndex: number; playerIds: string[] }>) => {
+        if (!isStaff) {
+            showAlert('Permesso negato', 'Solo lo staff può modificare gli eventi.');
+            return;
+        }
+        if (!match.events) return;
+
+        const toInsert = phases.filter(p => p.playerIds.length > 0);
+        if (!toInsert.length) return;
+
+        // Insert in descending index order so earlier insertions don't shift later indices
+        const sorted = [...toInsert].sort((a, b) => b.beforeRawEventIndex - a.beforeRawEventIndex);
+        const currentEvents = [...match.events];
+        for (const { beforeRawEventIndex, playerIds } of sorted) {
+            if (beforeRawEventIndex < 0 || beforeRawEventIndex > currentEvents.length) continue;
+            const touches = playerIds.map(pid => ({ k: 'touch' as const, p: pid }));
+            currentEvents.splice(beforeRawEventIndex, 0, ...touches);
+        }
+
+        const newDerive = derive({ pullFirst: match.pullFirst, events: currentEvents });
+        try {
+            await updateMatchAnalysis({
+                id: match.id,
+                events: currentEvents,
+                ourScore: newDerive.score.us,
+                theirScore: newDerive.score.them,
+            });
+        } catch {
+            showAlert('Errore', 'Impossibile salvare i tocchi.');
+        }
+    };
+
     const handleUpdatePointLine = async (pointNumber: number, oldPlayerId: string, newPlayerId: string) => {
-        if (!canEdit || !match || !match.id) {
+        if (!isStaff || !match || !match.id) {
             showAlert('Errore', 'Non hai i permessi per modificare questa partita.');
             return;
         }
@@ -869,6 +917,8 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
         handleUpdatePullCoord,
         handleUpdateTurnoverEvent,
         handleUpdateGoalEvent,
+        handleInsertTouches,
+        handleInsertTouchPhases,
         handleUpdatePointLine,
         handleTriggerHalfTime,
         handleToggleDone,

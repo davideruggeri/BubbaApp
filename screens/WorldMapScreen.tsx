@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Modal, FlatList, Dimensions, TextInput, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Modal, FlatList, TextInput, ScrollView, ActivityIndicator, Platform, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { subscribeToWorldLocations, WorldLocation, addWorldLocation, updateWorldLocation, deleteWorldLocation, subscribeToEvents, subscribeToHallOfFame, Event, HallOfFameEntry, deleteEvent, deleteHallOfFameEntry, getEventRoster, RosterMember, checkAndAutoArchivePastTournaments, updateEvent, updateHallOfFameEntry } from '../services/firestore';
 import { useTheme } from '../context/ThemeContext';
@@ -32,6 +33,7 @@ type MapItem = {
     placement?: string;
     awards?: string[];
     roster?: RosterMember[];
+    isCurifSticker?: boolean;
     originalItem: WorldLocation | Event | HallOfFameEntry;
 };
 
@@ -41,7 +43,7 @@ type LocationMarkerGroup = {
     latitude: number;
     longitude: number;
     items: MapItem[];
-    primaryType: 'location' | 'event' | 'hof';
+    primaryType: 'location' | 'event' | 'hof' | 'sticker';
 };
 
 // Global cache for Leaflet modules so it only loads once in the app lifetime
@@ -79,9 +81,14 @@ export default function WorldMapScreen() {
     const { theme, isDark } = useTheme();
     const navigation = useNavigation<any>();
     const { isGlobalAdmin, isStaff, userProfile } = useAuth();
+    const insets = useSafeAreaInsets();
+    const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+    const isMobile = screenWidth < 768;
+    const isSmallMobile = screenWidth < 400;
 
     const [mapItems, setMapItems] = useState<MapItem[]>([]);
     const [selectedItem, setSelectedItem] = useState<MapItem | null>(null);
+    const [previewGroup, setPreviewGroup] = useState<LocationMarkerGroup | null>(null);
     const [tempSelectedId, setTempSelectedId] = useState<string | null>(null);
 
     // Add/Edit State
@@ -257,9 +264,30 @@ export default function WorldMapScreen() {
                 const normLoc = (loc.locationName || '').trim();
                 const normTitle = (loc.title || '').trim().toLowerCase();
 
+                // Gli Sticker Curif sono entità indipendenti e non devono MAI fondersi con tornei/eventi esistenti
+                if (loc.isCurifSticker) {
+                    items.push({
+                        id: loc.id,
+                        type: 'location',
+                        title: (loc.title || '').trim() || 'Sticker Curif',
+                        locationName: normLoc || loc.title || 'Luogo',
+                        date: loc.date || '',
+                        latitude: lat,
+                        longitude: lng,
+                        description: loc.description,
+                        images: loc.images,
+                        isCurifSticker: true,
+                        originalItem: loc
+                    });
+                    return;
+                }
+
+                // Per luoghi generici manuali non-sticker:
                 const existing = items.find(it =>
-                    (it.title || '').trim().toLowerCase() === normTitle ||
-                    (normLoc && (it.locationName || '').trim().toLowerCase() === normLoc.toLowerCase() && Math.abs(it.latitude - lat) < 0.005 && Math.abs(it.longitude - lng) < 0.005)
+                    !it.isCurifSticker && (
+                        (it.title || '').trim().toLowerCase() === normTitle ||
+                        (normLoc && (it.locationName || '').trim().toLowerCase() === normLoc.toLowerCase() && Math.abs(it.latitude - lat) < 0.005 && Math.abs(it.longitude - lng) < 0.005)
+                    )
                 );
 
                 if (existing) {
@@ -280,6 +308,7 @@ export default function WorldMapScreen() {
                         longitude: lng,
                         description: loc.description,
                         images: loc.images,
+                        isCurifSticker: false,
                         originalItem: loc
                     });
                 }
@@ -347,7 +376,7 @@ export default function WorldMapScreen() {
                     latitude: item.latitude,
                     longitude: item.longitude,
                     items: [],
-                    primaryType: item.type,
+                    primaryType: item.isCurifSticker ? 'sticker' : item.type,
                 };
                 groups.set(key, group);
             } else {
@@ -362,11 +391,35 @@ export default function WorldMapScreen() {
                 group.primaryType = 'hof';
             } else if (item.type === 'event' && group.primaryType !== 'hof') {
                 group.primaryType = 'event';
+            } else if (item.isCurifSticker && group.items.every(i => i.isCurifSticker)) {
+                group.primaryType = 'sticker';
             }
         });
 
         return Array.from(groups.values());
     }, [mapItems]);
+
+    const [categoryFilter, setCategoryFilter] = useState<'all' | 'events' | 'stickers'>('all');
+
+    const filteredLocationMarkers = useMemo(() => {
+        if (categoryFilter === 'all') return locationMarkers;
+        return locationMarkers
+            .map(group => {
+                const filteredItems = group.items.filter(item => {
+                    if (categoryFilter === 'stickers') return Boolean(item.isCurifSticker);
+                    if (categoryFilter === 'events') return !item.isCurifSticker;
+                    return true;
+                });
+                if (filteredItems.length === 0) return null;
+                const isAllStickers = filteredItems.every(i => i.isCurifSticker);
+                return {
+                    ...group,
+                    items: filteredItems,
+                    primaryType: isAllStickers ? ('sticker' as const) : group.primaryType
+                };
+            })
+            .filter((g): g is LocationMarkerGroup => g !== null);
+    }, [locationMarkers, categoryFilter]);
 
     const [filterLocationName, setFilterLocationName] = useState<string | null>(null);
     const [selectedGroupItems, setSelectedGroupItems] = useState<MapItem[] | null>(null);
@@ -459,6 +512,17 @@ export default function WorldMapScreen() {
                     border: 2px solid white;
                     box-shadow: 0 2px 5px rgba(0,0,0,0.3);
                 }
+                .curif-sticker-marker {
+                    border-radius: 50% !important;
+                    border: 3px solid #ffcc00 !important;
+                    box-shadow: 0 0 12px rgba(255, 204, 0, 0.9), 0 2px 6px rgba(0,0,0,0.4) !important;
+                    background-color: #fff;
+                    object-fit: cover;
+                }
+                .mixed-marker-wrapper {
+                    background: transparent !important;
+                    border: none !important;
+                }
                 .dark-map .leaflet-tile,
                 .leaflet-container.dark-map .leaflet-tile,
                 .dark-tiles .leaflet-tile,
@@ -467,6 +531,30 @@ export default function WorldMapScreen() {
                 .leaflet-pane.dark-tiles img,
                 .leaflet-tile-pane.dark-tiles img {
                     filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%) !important;
+                }
+                /* Mobile: zoom controls spostati in basso a destra */
+                @media (max-width: 768px) {
+                    .leaflet-top.leaflet-left {
+                        top: auto !important;
+                        bottom: 90px !important;
+                        left: auto !important;
+                        right: 12px !important;
+                    }
+                    .leaflet-control-zoom a {
+                        width: 38px !important;
+                        height: 38px !important;
+                        line-height: 38px !important;
+                        font-size: 22px !important;
+                    }
+                    .leaflet-tooltip {
+                        font-size: 12px !important;
+                        padding: 3px 7px !important;
+                        max-width: 160px;
+                        white-space: normal !important;
+                    }
+                    .leaflet-control-attribution {
+                        font-size: 9px !important;
+                    }
                 }
             `;
         }
@@ -506,19 +594,151 @@ export default function WorldMapScreen() {
         }
     }, [Leaflet]);
 
+    // Icona personalizzata per Sticker Curif
+    const curifStickerIcon = useMemo(() => {
+        if (Platform.OS !== 'web' || !Leaflet) return null;
+        try {
+            const L = Leaflet?.default || Leaflet;
+            if (!L || !L.Icon) return null;
+
+            let stickerAsset = require('../assets/Curif26_adesivo.jpg');
+            let stickerUri = '';
+            if (typeof stickerAsset === 'string') {
+                stickerUri = stickerAsset;
+            } else if (stickerAsset && typeof stickerAsset === 'object') {
+                if (stickerAsset.uri) stickerUri = stickerAsset.uri;
+                else if (stickerAsset.default) stickerUri = stickerAsset.default;
+            }
+            if (!stickerUri && Image && typeof Image.resolveAssetSource === 'function') {
+                const assetSource = Image.resolveAssetSource(stickerAsset);
+                if (assetSource) stickerUri = assetSource.uri;
+            }
+            if (!stickerUri) return null;
+
+            return new L.Icon({
+                iconUrl: stickerUri,
+                iconSize: [42, 42],
+                iconAnchor: [21, 21],
+                popupAnchor: [0, -21],
+                className: 'custom-marker curif-sticker-marker',
+            });
+        } catch (e) {
+            console.error("Errore creazione icona Sticker Curif:", e);
+            return null;
+        }
+    }, [Leaflet]);
+
+    // Icona combinata per luoghi che hanno SIA tornei/eventi SIA Sticker Curif
+    const mixedMarkerIcon = useMemo(() => {
+        if (Platform.OS !== 'web' || !Leaflet) return null;
+        try {
+            const L = Leaflet?.default || Leaflet;
+            if (!L || !L.divIcon) return null;
+
+            let logoAsset = require('../assets/logo.jpeg');
+            let logoUri = '';
+            if (typeof logoAsset === 'string') logoUri = logoAsset;
+            else if (logoAsset?.uri) logoUri = logoAsset.uri;
+            else if (logoAsset?.default) logoUri = logoAsset.default;
+            if (!logoUri && Image && typeof Image.resolveAssetSource === 'function') {
+                const s = Image.resolveAssetSource(logoAsset);
+                if (s) logoUri = s.uri;
+            }
+
+            let stickerAsset = require('../assets/Curif26_adesivo.jpg');
+            let stickerUri = '';
+            if (typeof stickerAsset === 'string') stickerUri = stickerAsset;
+            else if (stickerAsset?.uri) stickerUri = stickerAsset.uri;
+            else if (stickerAsset?.default) stickerUri = stickerAsset.default;
+            if (!stickerUri && Image && typeof Image.resolveAssetSource === 'function') {
+                const s = Image.resolveAssetSource(stickerAsset);
+                if (s) stickerUri = s.uri;
+            }
+
+            if (!logoUri || !stickerUri) return null;
+
+            return new L.divIcon({
+                className: 'mixed-marker-wrapper',
+                html: `
+                    <div style="position: relative; width: 44px; height: 44px;">
+                        <img src="${logoUri}" style="width: 38px; height: 38px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4); object-fit: cover;" />
+                        <img src="${stickerUri}" style="position: absolute; bottom: 0px; right: 0px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #FFC107; box-shadow: 0 0 6px rgba(255,193,7,0.9); object-fit: cover;" />
+                    </div>
+                `,
+                iconSize: [44, 44],
+                iconAnchor: [22, 22],
+                popupAnchor: [0, -22],
+            });
+        } catch (e) {
+            console.error("Errore creazione icona mista:", e);
+            return null;
+        }
+    }, [Leaflet]);
+
     const locationIcon = sharedIcon;
     const eventIcon = sharedIcon;
     const hofIcon = sharedIcon;
 
     // Render Native Map Placeholder
     if (Platform.OS !== 'web') {
+        const totalLocations = rawLocations.length;
+        const totalStickers = rawLocations.filter(l => l.isCurifSticker).length;
+        const totalTournaments = rawHOF.length + rawEvents.filter(e => (e as any).type === 'tournament' || (e as any).type === 'torneo').length;
         return (
-            <View style={{ flex: 1, backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
                 <ScreenTitle
                     title="Bubba World"
                     onBack={() => navigation.goBack()}
                 />
-                <Text style={{ color: theme.colors.text }}>La mappa è disponibile solo su Web.</Text>
+                <ScrollView contentContainerStyle={{ padding: 20, alignItems: 'center' }}>
+                    <Image
+                        source={require('../assets/world.png')}
+                        style={{ width: 80, height: 80, tintColor: theme.colors.primary, marginBottom: 20, marginTop: 20 }}
+                        resizeMode="contain"
+                    />
+                    <Text style={{ color: theme.colors.text, fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
+                        Mappa Interattiva
+                    </Text>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 28, lineHeight: 20 }}>
+                        La mappa interattiva è disponibile sulla versione Web. Apri BubbaApp nel browser per esplorare tutti i luoghi!
+                    </Text>
+                    <View style={{ width: '100%', flexDirection: 'row', gap: 12, marginBottom: 20 }}>
+                        <View style={{ flex: 1, backgroundColor: theme.colors.card, borderRadius: 14, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border }}>
+                            <Text style={{ color: theme.colors.primary, fontSize: 28, fontWeight: 'bold' }}>{totalLocations}</Text>
+                            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4, textAlign: 'center' }}>Luoghi</Text>
+                        </View>
+                        <View style={{ flex: 1, backgroundColor: theme.colors.card, borderRadius: 14, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border }}>
+                            <Text style={{ color: '#e6a800', fontSize: 28, fontWeight: 'bold' }}>{totalStickers}</Text>
+                            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4, textAlign: 'center' }}>Sticker Curif</Text>
+                        </View>
+                        <View style={{ flex: 1, backgroundColor: theme.colors.card, borderRadius: 14, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border }}>
+                            <Text style={{ color: '#4CAF50', fontSize: 28, fontWeight: 'bold' }}>{totalTournaments}</Text>
+                            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4, textAlign: 'center' }}>Tornei</Text>
+                        </View>
+                    </View>
+                    {rawLocations.filter(l => l.isCurifSticker).length > 0 && (
+                        <View style={{ width: '100%', backgroundColor: theme.colors.card, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e6a800' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                                <Image source={require('../assets/Curif26_adesivo.jpg')} style={{ width: 28, height: 28, borderRadius: 14, marginRight: 8, borderWidth: 1.5, borderColor: '#e6a800' }} />
+                                <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: 'bold' }}>Sticker Curif trovati</Text>
+                            </View>
+                            {rawLocations.filter(l => l.isCurifSticker).slice(0, 5).map((loc, idx) => (
+                                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: idx > 0 ? 1 : 0, borderTopColor: theme.colors.border }}>
+                                    <Text style={{ color: '#e6a800', marginRight: 8, fontSize: 16 }}>📍</Text>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={{ color: theme.colors.text, fontWeight: '600', fontSize: 14 }}>{loc.title || 'Sticker Curif'}</Text>
+                                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>{loc.locationName}</Text>
+                                    </View>
+                                </View>
+                            ))}
+                            {rawLocations.filter(l => l.isCurifSticker).length > 5 && (
+                                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, textAlign: 'center', marginTop: 8 }}>
+                                    +{rawLocations.filter(l => l.isCurifSticker).length - 5} altri sticker sulla mappa web
+                                </Text>
+                            )}
+                        </View>
+                    )}
+                </ScrollView>
             </View>
         );
     }
@@ -560,6 +780,50 @@ export default function WorldMapScreen() {
                 }}
             />
             <View style={{ flex: 1, width: '100%', minHeight: 400, position: 'relative' }}>
+                {/* Floating Map Filter Pills */}
+                <View style={[styles.floatingFilterContainer, isMobile && styles.floatingFilterContainerMobile]}>
+                    <TouchableOpacity
+                        style={[
+                            styles.filterPill,
+                            isMobile && styles.filterPillMobile,
+                            {
+                                backgroundColor: categoryFilter === 'all' ? theme.colors.primary : theme.colors.card,
+                                borderColor: categoryFilter === 'all' ? theme.colors.primary : theme.colors.border
+                            }
+                        ]}
+                        onPress={() => setCategoryFilter('all')}
+                    >
+                        <Text style={[styles.filterPillText, isMobile && styles.filterPillTextMobile, { color: categoryFilter === 'all' ? '#fff' : theme.colors.text }]}>Tutti</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[
+                            styles.filterPill,
+                            isMobile && styles.filterPillMobile,
+                            {
+                                backgroundColor: categoryFilter === 'events' ? theme.colors.primary : theme.colors.card,
+                                borderColor: categoryFilter === 'events' ? theme.colors.primary : theme.colors.border
+                            }
+                        ]}
+                        onPress={() => setCategoryFilter('events')}
+                    >
+                        <Text style={[styles.filterPillText, isMobile && styles.filterPillTextMobile, { color: categoryFilter === 'events' ? '#fff' : theme.colors.text }]}>{isMobile ? '🏆' : '🏆 Tornei'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[
+                            styles.filterPill,
+                            isMobile && styles.filterPillMobile,
+                            {
+                                backgroundColor: categoryFilter === 'stickers' ? '#e6a800' : theme.colors.card,
+                                borderColor: categoryFilter === 'stickers' ? '#e6a800' : theme.colors.border
+                            }
+                        ]}
+                        onPress={() => setCategoryFilter('stickers')}
+                    >
+                        <Image source={require('../assets/Curif26_adesivo.jpg')} style={[styles.filterPillIcon, isMobile && { width: 16, height: 16, marginRight: isMobile ? 4 : 6 }]} />
+                        <Text style={[styles.filterPillText, isMobile && styles.filterPillTextMobile, { color: categoryFilter === 'stickers' ? '#fff' : theme.colors.text }]}>{isMobile ? 'Curif' : 'Sticker Curif'}</Text>
+                    </TouchableOpacity>
+                </View>
+
                 {/* @ts-ignore */}
                 <MapContainer center={[41.9028, 12.4964]} zoom={3} className={isDark ? "dark-map" : ""} style={{ height: '100%', width: '100%', backgroundColor: isDark ? '#1a1d21' : '#ddd' }}>
                     <MapResizeHandler useMap={useMap} />
@@ -568,16 +832,31 @@ export default function WorldMapScreen() {
                         attribution={attribution}
                         className={isDark ? "dark-tiles" : ""}
                     />
-                    {locationMarkers.map((group) => {
+                    {filteredLocationMarkers.map((group) => {
+                        const hasStickers = group.items.some(i => i.isCurifSticker);
+                        const hasEvents = group.items.some(i => !i.isCurifSticker);
+
                         let icon = locationIcon;
-                        if (group.primaryType === 'event') icon = eventIcon;
-                        if (group.primaryType === 'hof') icon = hofIcon;
+                        if (hasStickers && hasEvents) {
+                            icon = mixedMarkerIcon || locationIcon;
+                        } else if (hasStickers) {
+                            icon = curifStickerIcon || locationIcon;
+                        } else if (group.primaryType === 'event') {
+                            icon = eventIcon;
+                        } else if (group.primaryType === 'hof') {
+                            icon = hofIcon;
+                        }
 
                         if (!icon) return null;
 
-                        const tooltipLabel = group.items.length > 1
-                            ? `${group.locationName} (${group.items.length})`
-                            : group.locationName;
+                        const stickerCount = group.items.filter(i => i.isCurifSticker).length;
+                        const eventCount = group.items.filter(i => !i.isCurifSticker).length;
+                        let tooltipLabel = group.locationName;
+                        if (stickerCount > 0 && eventCount > 0) {
+                            tooltipLabel = `${group.locationName} (${eventCount} Tornei + ${stickerCount} Sticker)`;
+                        } else if (group.items.length > 1) {
+                            tooltipLabel = `${group.locationName} (${group.items.length})`;
+                        }
 
                         return (
                             <LMarker
@@ -615,13 +894,13 @@ export default function WorldMapScreen() {
 
             {canAdd && (
                 <TouchableOpacity
-                    style={[styles.fab, { backgroundColor: theme.colors.primary }]}
+                    style={[styles.fab, { backgroundColor: theme.colors.primary }, isMobile && styles.fabMobile]}
                     onPress={() => {
                         setEditingItem(null);
                         setIsAddModalVisible(true);
                     }}
                 >
-                    <Image source={require('../assets/plus.png')} style={styles.fabIcon} />
+                    <Image source={require('../assets/plus.png')} style={[styles.fabIcon, isMobile && { width: 24, height: 24 }]} />
                 </TouchableOpacity>
             )}
 
@@ -674,10 +953,25 @@ export default function WorldMapScreen() {
                         setSelectedGroupItems(null);
                         setSelectedItem(item);
                     }}
-                    onAdd={() => {
+                    onAdd={(prefilledLocation?: string) => {
                         setIsListModalVisible(false);
                         setSelectedGroupItems(null);
-                        setEditingItem(null);
+                        if (prefilledLocation) {
+                            const companion = mapItems.find(i => i.locationName.trim().toLowerCase() === prefilledLocation.trim().toLowerCase());
+                            setEditingItem({
+                                id: '',
+                                type: 'location',
+                                title: '',
+                                locationName: prefilledLocation,
+                                date: new Date().toISOString().split('T')[0],
+                                latitude: companion ? companion.latitude : 0,
+                                longitude: companion ? companion.longitude : 0,
+                                isCurifSticker: categoryFilter === 'stickers',
+                                originalItem: {} as any,
+                            });
+                        } else {
+                            setEditingItem(null);
+                        }
                         setIsAddModalVisible(true);
                     }}
                     theme={theme}
@@ -732,7 +1026,7 @@ const LocationListModal = ({
     selectedGroupItems?: MapItem[] | null;
     onClose: () => void;
     onSelect: (item: MapItem) => void;
-    onAdd: () => void;
+    onAdd: (prefilledLocation?: string) => void;
     theme: any;
     canAdd: boolean;
     formatDate: (d: string) => string;
@@ -795,8 +1089,8 @@ const LocationListModal = ({
                     {selectedLocationName ? selectedLocationName : 'Elenco Luoghi'}
                 </Text>
 
-                {!selectedLocationName && canAdd ? (
-                    <TouchableOpacity onPress={onAdd}>
+                {canAdd ? (
+                    <TouchableOpacity onPress={() => onAdd(selectedLocationName || undefined)}>
                         <Image source={require('../assets/plus.png')} style={{ width: 24, height: 24, tintColor: theme.colors.primary }} />
                     </TouchableOpacity>
                 ) : <View style={{ width: 24 }} />}
@@ -809,7 +1103,12 @@ const LocationListModal = ({
                     renderItem={({ item }) => (
                         <TouchableOpacity onPress={() => onSelect(item)} style={[styles.listItem, { borderBottomColor: theme.colors.border }]}>
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Text style={[styles.listItemTitle, { color: theme.colors.text, flex: 1 }]}>{item.title}</Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                                    {item.isCurifSticker ? (
+                                        <Image source={require('../assets/Curif26_adesivo.jpg')} style={{ width: 22, height: 22, borderRadius: 11, marginRight: 8, borderWidth: 1, borderColor: '#e6a800' }} />
+                                    ) : null}
+                                    <Text style={[styles.listItemTitle, { color: theme.colors.text, flex: 1 }]}>{item.title}</Text>
+                                </View>
                                 {item.placement ? (
                                     <View style={[styles.placementBadge, { backgroundColor: getPlacementColor(item.placement), marginBottom: 0, marginLeft: 8 }]}>
                                         <Text style={[styles.placementText, { color: getPlacementTextColor(item.placement) }]}>{item.placement}</Text>
@@ -818,6 +1117,7 @@ const LocationListModal = ({
                             </View>
                             <Text style={[styles.listItemSubtitle, { color: theme.colors.textSecondary }]}>
                                 {formatDate(item.date)} • {(() => {
+                                    if (item.isCurifSticker) return 'Sticker Curif';
                                     if (item.type === 'hof') return 'Hall of Fame';
                                     if (item.type === 'location') return 'Luogo';
                                     const t = (item.originalItem as any)?.type;
@@ -892,13 +1192,16 @@ const LocationDetails = ({
     const placement = item.placement || (item.originalItem as HallOfFameEntry)?.placement;
     const awards = item.awards || (item.originalItem as HallOfFameEntry)?.awards;
 
+    const { width: detailWidth } = useWindowDimensions();
+    const isMobileDetail = detailWidth < 768;
+
     return (
-        <View style={[styles.detailsContainer, { backgroundColor: theme.colors.background }]}>
-            <View style={styles.header}>
+        <View style={[styles.detailsContainer, { backgroundColor: theme.colors.background }, isMobileDetail && { padding: 14 }]}>
+            <View style={[styles.header, isMobileDetail && { marginTop: 20, marginBottom: 6 }]}>
                 <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                    <Image source={require('../assets/x.png')} style={{ width: 30, height: 30 }} resizeMode="contain" />
+                    <Image source={require('../assets/x.png')} style={{ width: 26, height: 26 }} resizeMode="contain" />
                 </TouchableOpacity>
-                <Text style={[styles.title, { color: theme.colors.text, flex: 1, textAlign: 'right' }]}>{item.title}</Text>
+                <Text style={[styles.title, { color: theme.colors.text, flex: 1, textAlign: 'right' }, isMobileDetail && { fontSize: 18 }]} numberOfLines={2}>{item.title}</Text>
             </View>
 
             {canEdit && (
@@ -913,6 +1216,13 @@ const LocationDetails = ({
             )}
 
             <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
+                {item.isCurifSticker ? (
+                    <View style={styles.stickerBadge}>
+                        <Image source={require('../assets/Curif26_adesivo.jpg')} style={styles.stickerBadgeIcon} />
+                        <Text style={styles.stickerBadgeText}>Sticker Curif</Text>
+                    </View>
+                ) : null}
+
                 <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
                     {item.locationName ? `${item.locationName} - ` : ''}{formatDate(item.date)}
                 </Text>
@@ -944,7 +1254,8 @@ const LocationDetails = ({
                     <Text style={[styles.description, { color: theme.colors.text }]}>{item.description}</Text>
                 ) : null}
 
-                {/* Roster Section */}
+                {/* Roster Section - non mostrato per gli sticker */}
+                {!item.isCurifSticker && (
                 <View style={{ marginBottom: 20 }}>
                     <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
                         Partecipanti {eventRoster.length > 0 ? `(${eventRoster.length})` : ''}:
@@ -976,6 +1287,7 @@ const LocationDetails = ({
                         </Text>
                     )}
                 </View>
+                )}
 
                 {/* Images */}
                 {item.images && item.images.length > 0 ? (
@@ -1001,9 +1313,11 @@ const LocationDetails = ({
                 <Modal visible={true} transparent={true} onRequestClose={() => setSelectedImage(null)}>
                     <View style={styles.fullscreenImageContainer}>
                         <TouchableOpacity style={styles.fullscreenClose} onPress={() => setSelectedImage(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                            <Image source={require('../assets/x.png')} style={{ width: 30, height: 30, tintColor: 'white' }} resizeMode="contain" />
+                            <View style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 6 }}>
+                                <Image source={require('../assets/x.png')} style={{ width: 24, height: 24, tintColor: 'red' }} resizeMode="contain" />
+                            </View>
                         </TouchableOpacity>
-                        <Image source={{ uri: selectedImage }} style={styles.fullscreenImage} resizeMode="contain" />
+                        <Image source={{ uri: selectedImage }} style={{ flex: 1, width: '100%' }} resizeMode="contain" />
                     </View>
                 </Modal>
             )}
@@ -1025,6 +1339,9 @@ const AddLocationModal = ({
     onSaved?: (updated: Partial<MapItem>) => void;
     existingItems?: MapItem[];
 }) => {
+    const { isDark } = useTheme();
+    const isEditing = Boolean(initialItem && initialItem.id);
+    const [isCurifSticker, setIsCurifSticker] = useState(initialItem?.isCurifSticker || false);
     const [title, setTitle] = useState(initialItem?.title || '');
     const [locationName, setLocationName] = useState(initialItem?.locationName || '');
     const [description, setDescription] = useState(initialItem?.description || '');
@@ -1081,7 +1398,7 @@ const AddLocationModal = ({
             const parsedLat = parseFloat(latitude);
             const parsedLng = parseFloat(longitude);
 
-            if (initialItem) {
+            if (isEditing && initialItem) {
                 showConfirmation(
                     "Conferma Modifica",
                     `Vuoi salvare le modifiche per "${title}" (${locationName})?`,
@@ -1096,7 +1413,8 @@ const AddLocationModal = ({
                                     date,
                                     latitude: parsedLat,
                                     longitude: parsedLng,
-                                    images: uploadedImageUrls
+                                    images: uploadedImageUrls,
+                                    isCurifSticker
                                 });
                             } else if (initialItem.type === 'event') {
                                 await updateEvent({
@@ -1130,7 +1448,8 @@ const AddLocationModal = ({
                                     date,
                                     latitude: parsedLat,
                                     longitude: parsedLng,
-                                    images: uploadedImageUrls
+                                    images: uploadedImageUrls,
+                                    isCurifSticker
                                 });
                             }
                             showAlert('Successo', 'Modifiche salvate correttamente!');
@@ -1152,7 +1471,8 @@ const AddLocationModal = ({
                 date,
                 latitude: parsedLat,
                 longitude: parsedLng,
-                images: uploadedImageUrls
+                images: uploadedImageUrls,
+                isCurifSticker
             });
             showAlert('Successo', 'Luogo aggiunto correttamente!');
             onClose();
@@ -1170,14 +1490,50 @@ const AddLocationModal = ({
                 <TouchableOpacity onPress={onClose}>
                     <Text style={{ color: theme.colors.primary, fontSize: 18 }}>Annulla</Text>
                 </TouchableOpacity>
-                <Text style={[styles.modalTitle, { color: theme.colors.text }]}>{initialItem ? 'Modifica' : 'Nuovo Luogo'}</Text>
+                <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
+                    {isEditing ? 'Modifica' : (isCurifSticker ? 'Nuovo Sticker Curif' : 'Nuovo Luogo')}
+                </Text>
                 <TouchableOpacity onPress={handleSave} disabled={uploading}>
                     {uploading ? <ActivityIndicator color={theme.colors.primary} /> : <Text style={{ color: theme.colors.primary, fontSize: 18, fontWeight: 'bold' }}>Salva</Text>}
                 </TouchableOpacity>
             </View>
             <ScrollView style={styles.formContainer}>
+                <TouchableOpacity
+                    style={[
+                        styles.stickerToggle,
+                        {
+                            borderColor: isCurifSticker ? '#e6a800' : theme.colors.border,
+                            backgroundColor: isCurifSticker ? (isDark ? '#332700' : '#fff9e6') : theme.colors.card
+                        }
+                    ]}
+                    onPress={() => {
+                        const next = !isCurifSticker;
+                        setIsCurifSticker(next);
+                        if (next && (!title || title.trim() === '')) {
+                            setTitle('Sticker Curif');
+                        }
+                    }}
+                >
+                    <Image source={require('../assets/Curif26_adesivo.jpg')} style={styles.stickerToggleIcon} />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={[styles.stickerToggleTitle, { color: theme.colors.text }]}>Sticker Curif</Text>
+                        <Text style={[styles.stickerToggleSubtitle, { color: theme.colors.textSecondary }]}>
+                            Contrassegna come Sticker Curif con icona speciale
+                        </Text>
+                    </View>
+                    <View style={[
+                        styles.checkboxIndicator,
+                        {
+                            backgroundColor: isCurifSticker ? '#e6a800' : 'transparent',
+                            borderColor: isCurifSticker ? '#e6a800' : theme.colors.border
+                        }
+                    ]}>
+                        {isCurifSticker ? <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>✓</Text> : null}
+                    </View>
+                </TouchableOpacity>
+
                 <Text style={[styles.label, { color: theme.colors.text }]}>Titolo *</Text>
-                <TextInput style={[styles.input, { color: theme.colors.text, borderColor: theme.colors.border }]} value={title} onChangeText={setTitle} placeholder="Es. Torneo Parigi" placeholderTextColor={theme.colors.textSecondary} />
+                <TextInput style={[styles.input, { color: theme.colors.text, borderColor: theme.colors.border }]} value={title} onChangeText={setTitle} placeholder="Es. Torneo Parigi o Sticker Curif" placeholderTextColor={theme.colors.textSecondary} />
 
                 <Text style={[styles.label, { color: theme.colors.text }]}>Nome Luogo *</Text>
                 <View style={{ marginBottom: 15 }}>
@@ -1308,9 +1664,9 @@ const styles = StyleSheet.create({
         paddingBottom: 20,
     },
     gridImage: {
-        width: (Dimensions.get('window').width - 60) / 3,
-        height: (Dimensions.get('window').width - 60) / 3,
-        margin: 5,
+        width: '31%',
+        aspectRatio: 1,
+        margin: '1%',
         borderRadius: 8,
         backgroundColor: '#eee',
     },
@@ -1351,6 +1707,13 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.3,
         shadowRadius: 3,
         zIndex: 1000,
+    },
+    fabMobile: {
+        bottom: 16,
+        right: 16,
+        width: 50,
+        height: 50,
+        borderRadius: 25,
     },
     fabIcon: {
         width: 30,
@@ -1480,5 +1843,113 @@ const styles = StyleSheet.create({
         fontSize: 10,
         color: '#666',
         fontWeight: 'bold',
+    },
+    floatingFilterContainer: {
+        position: 'absolute',
+        top: 14,
+        left: 12,
+        right: 12,
+        zIndex: 1000,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        flexWrap: 'wrap',
+        gap: 8,
+        pointerEvents: 'box-none',
+    },
+    floatingFilterContainerMobile: {
+        top: 8,
+        left: 8,
+        right: 8,
+        gap: 6,
+        flexWrap: 'nowrap',
+        justifyContent: 'space-evenly',
+    },
+    filterPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 20,
+        borderWidth: 1.5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+    filterPillMobile: {
+        paddingVertical: 5,
+        paddingHorizontal: 8,
+        borderRadius: 16,
+        flex: 1,
+        justifyContent: 'center',
+    },
+    filterPillText: {
+        fontSize: 13,
+        fontWeight: 'bold',
+    },
+    filterPillTextMobile: {
+        fontSize: 11,
+        fontWeight: 'bold',
+    },
+    filterPillIcon: {
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        marginRight: 6,
+    },
+    stickerBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff8e1',
+        borderWidth: 1.5,
+        borderColor: '#e6a800',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 14,
+        alignSelf: 'flex-start',
+        marginBottom: 10,
+    },
+    stickerBadgeIcon: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        marginRight: 6,
+    },
+    stickerBadgeText: {
+        color: '#b27b00',
+        fontSize: 13,
+        fontWeight: 'bold',
+    },
+    stickerToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 16,
+    },
+    stickerToggleIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#e6a800',
+    },
+    stickerToggleTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    stickerToggleSubtitle: {
+        fontSize: 12,
+        marginTop: 2,
+    },
+    checkboxIndicator: {
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        borderWidth: 1.5,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });

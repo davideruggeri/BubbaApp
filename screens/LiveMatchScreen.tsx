@@ -17,6 +17,7 @@ import CompletedMatchSummary from '../components/liveMatch/CompletedMatchSummary
 import LineSelectionPhase from '../components/liveMatch/LineSelectionPhase';
 import PullRecordingPhase from '../components/liveMatch/PullRecordingPhase';
 import PlayActionPhase from '../components/liveMatch/PlayActionPhase';
+import PlayActionPhaseLive from '../components/liveMatch/PlayActionPhaseLive';
 import MatchStatsView from '../components/liveMatch/MatchStatsView';
 import LineSubstitutionModal from '../components/liveMatch/LineSubstitutionModal';
 import MatchRosterModal from '../components/liveMatch/MatchRosterModal';
@@ -36,6 +37,7 @@ export default function LiveMatchScreen() {
     const { matchId, initialMatch } = route.params;
     const { width: windowWidth } = useWindowDimensions();
     const isMobile = windowWidth < 600;
+    const [isLiveMode, setIsLiveMode] = React.useState(false);
 
     const {
         match,
@@ -91,6 +93,8 @@ export default function LiveMatchScreen() {
         handleUpdatePullCoord,
         handleUpdateTurnoverEvent,
         handleUpdateGoalEvent,
+        handleInsertTouches,
+        handleInsertTouchPhases,
         handleUpdatePointLine,
         handleTriggerHalfTime,
         handleToggleDone,
@@ -115,19 +119,19 @@ export default function LiveMatchScreen() {
                 opponent={match.opponent}
                 scoreUs={st.score.us}
                 scoreThem={st.score.them}
+                targetScore={match.targetScore || (match.surface === 'sabbia' ? 13 : 15)}
                 isCompleted={isCompleted}
                 activeTab={activeTab}
                 onTabChange={setActiveTab}
                 isStaff={isStaff}
                 canEdit={canEdit}
                 rosterCount={matchRoster.length}
-                onExportExcel={handleExportExcel}
-                onOpenTouches={() => setModalTouchesVisible(true)}
                 onOpenRoster={() => setModalRosterVisible(true)}
-                onUndo={handleUndo}
                 onToggleDone={handleToggleDone}
                 onBack={() => navigation.goBack()}
                 isMobile={isMobile}
+                isLiveMode={isLiveMode}
+                onToggleLiveMode={() => setIsLiveMode(v => !v)}
             />
 
             {/* Contenuto Schermata */}
@@ -148,6 +152,8 @@ export default function LiveMatchScreen() {
                             onOpenRoster={() => setModalRosterVisible(true)}
                             onToggleDone={handleToggleDone}
                             onOpenStats={() => setActiveTab('stats')}
+                            onExportExcel={handleExportExcel}
+                            onOpenTouches={() => setModalTouchesVisible(true)}
                         />
                     ) : (
                         <>
@@ -222,30 +228,51 @@ export default function LiveMatchScreen() {
                                 />
                             )}
                             {st.phase === 'play' && curPt && (
-                                <PlayActionPhase
-                                    curPt={curPt}
-                                    isOffense={st.poss === 'us'}
-                                    st={st}
-                                    pending={pending}
-                                    setPending={setPending}
-                                    pendingTrajectory={pendingTrajectory}
-                                    setPendingTrajectory={setPendingTrajectory}
-                                    prevDots={playPrevDots}
-                                    prevTrajectories={playPrevTrajectories}
-                                    isAttackingRight={isAttackingRight}
-                                    onFlipDirection={handleFlipDir}
-                                    canEdit={canEdit}
-                                    isMobile={isMobile}
-                                    pStats={pStats}
-                                    P={P}
-                                    pushEvent={pushEvent}
-                                    onChangeLine={() => {
-                                        setLineSel(curPt.line.slice());
-                                        setSubStep('roster');
-                                        setSubReason('injury');
-                                        setModalLineVisible(true);
-                                    }}
-                                />
+                                isLiveMode ? (
+                                    <PlayActionPhaseLive
+                                        curPt={curPt}
+                                        isOffense={st.poss === 'us'}
+                                        st={st}
+                                        canEdit={canEdit}
+                                        pending={!!pending}
+                                        pStats={pStats}
+                                        P={P}
+                                        pushEvent={pushEvent}
+                                        onChangeLine={() => {
+                                            setLineSel(curPt.line.slice());
+                                            setSubStep('roster');
+                                            setSubReason('injury');
+                                            setModalLineVisible(true);
+                                        }}
+                                        onUndo={handleUndo}
+                                    />
+                                ) : (
+                                    <PlayActionPhase
+                                        curPt={curPt}
+                                        isOffense={st.poss === 'us'}
+                                        st={st}
+                                        pending={pending}
+                                        setPending={setPending}
+                                        pendingTrajectory={pendingTrajectory}
+                                        setPendingTrajectory={setPendingTrajectory}
+                                        prevDots={playPrevDots}
+                                        prevTrajectories={playPrevTrajectories}
+                                        isAttackingRight={isAttackingRight}
+                                        onFlipDirection={handleFlipDir}
+                                        canEdit={canEdit}
+                                        isMobile={isMobile}
+                                        pStats={pStats}
+                                        P={P}
+                                        pushEvent={pushEvent}
+                                        onChangeLine={() => {
+                                            setLineSel(curPt.line.slice());
+                                            setSubStep('roster');
+                                            setSubReason('injury');
+                                            setModalLineVisible(true);
+                                        }}
+                                        onUndo={handleUndo}
+                                    />
+                                )
                             )}
                         </>
                     )}
@@ -262,10 +289,12 @@ export default function LiveMatchScreen() {
                     st={st}
                     match={match}
                     playerMap={playerMap}
-                    canEdit={canEdit}
+                    canEdit={isStaff}
                     onUpdatePullCoord={handleUpdatePullCoord}
                     onUpdateTurnoverEvent={handleUpdateTurnoverEvent}
                     onUpdateGoalEvent={handleUpdateGoalEvent}
+                    onInsertTouches={handleInsertTouches}
+                    onInsertTouchPhases={handleInsertTouchPhases}
                     onUpdatePointLine={handleUpdatePointLine}
                 />
             )}

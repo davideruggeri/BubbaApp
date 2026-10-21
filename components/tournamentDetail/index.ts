@@ -6,3 +6,4 @@ export * from './TournamentStatsTab';
 export * from './TournamentModals';
 export * from './TournamentPlayerDetailModal';
 export * from './ReorderTournamentMatchesModal';
+export * from './CreateTournamentMatchModal';

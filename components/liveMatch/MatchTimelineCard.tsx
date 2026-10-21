@@ -18,6 +18,8 @@ interface MatchTimelineCardProps {
     match?: MatchAnalysis;
     onUpdateGoalEvent?: (eventIndex: number, updated: { s?: string | null; a?: string | null }) => Promise<void>;
     onUpdatePointLine?: (pointNumber: number, oldPlayerId: string, newPlayerId: string) => Promise<void>;
+    onInsertTouches?: (beforeRawEventIndex: number, playerIds: string[]) => Promise<void>;
+    onInsertTouchPhases?: (phases: Array<{ beforeRawEventIndex: number; playerIds: string[] }>) => Promise<void>;
 }
 
 interface EditingGoalData {
@@ -48,6 +50,8 @@ export default function MatchTimelineCard({
     match,
     onUpdateGoalEvent,
     onUpdatePointLine,
+    onInsertTouches,
+    onInsertTouchPhases,
 }: MatchTimelineCardProps) {
     const { theme } = useTheme();
 
@@ -56,15 +60,13 @@ export default function MatchTimelineCard({
     const [isSavingGoal, setIsSavingGoal] = useState<boolean>(false);
     const [editingLine, setEditingLine] = useState<EditingLineData | null>(null);
     const [isSavingLine, setIsSavingLine] = useState<boolean>(false);
-    const [expandedSet, setExpandedSet] = useState<Set<number>>(() => {
-        // Di default espandiamo le ultime 3 mete per immediatezza
-        const initial = new Set<number>();
-        const total = points.length;
-        for (let i = Math.max(1, total - 2); i <= total; i++) {
-            initial.add(i);
-        }
-        return initial;
-    });
+
+    // Stato per l'arricchimento video — un pannello per meta con fasi di attacco
+    const [enrichingPtNum, setEnrichingPtNum] = useState<number | null>(null);
+    const [phaseSeqs, setPhaseSeqs] = useState<Record<string, string[]>>({});
+    const [activePhasePicker, setActivePhasePicker] = useState<number | null>(null);
+    const [savingTouches, setSavingTouches] = useState(false);
+    const [expandedSet, setExpandedSet] = useState<Set<number>>(new Set());
 
     // Calcolo punteggi progressivi per ogni meta
     const pointsWithScore = useMemo(() => {
@@ -384,7 +386,7 @@ export default function MatchTimelineCard({
                                                 <Text style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}>
                                                     FORMAZIONE IN CAMPO ({pt.line?.length || 0}):
                                                 </Text>
-                                                {canEdit && onUpdatePointLine && (
+                                                {!!onUpdatePointLine && (
                                                     <TouchableOpacity
                                                         style={{
                                                             paddingHorizontal: 8,
@@ -468,6 +470,8 @@ export default function MatchTimelineCard({
                                             ) : (
                                                 significantEvents.map((e, eIdx) => {
                                                     const parsed = renderEventDetails(e, P, opponentName, theme);
+                                                    const rawIdx = rawEvents.findIndex(re => re === e || (re.k === e.k && re.t === e.t && re.s === e.s && re.a === e.a));
+
                                                     return (
                                                         <View key={`ev-${eIdx}`} style={[styles.eventRow, { justifyContent: 'space-between', alignItems: 'center' }]}>
                                                             <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
@@ -486,7 +490,7 @@ export default function MatchTimelineCard({
                                                                 </View>
                                                             </View>
 
-                                                            {canEdit && onUpdateGoalEvent && e.k === 'goal' && (
+                                                            {!!onUpdateGoalEvent && e.k === 'goal' && (
                                                                 <TouchableOpacity
                                                                     style={{
                                                                         paddingHorizontal: 8,
@@ -501,11 +505,10 @@ export default function MatchTimelineCard({
                                                                         marginLeft: 8,
                                                                     }}
                                                                     onPress={() => {
-                                                                        const idx = rawEvents.findIndex(item => item === e || (item.k === e.k && item.t === e.t && item.s === e.s && item.a === e.a));
-                                                                        if (idx !== -1) {
+                                                                        if (rawIdx !== -1) {
                                                                             setEditingGoal({
                                                                                 event: e,
-                                                                                eventIndex: idx,
+                                                                                eventIndex: rawIdx,
                                                                                 point: pt,
                                                                                 scorer: e.s || null,
                                                                                 assist: e.a || null,
@@ -522,6 +525,145 @@ export default function MatchTimelineCard({
                                                 })
                                             )}
                                         </View>
+
+                                        {/* Bottone/Pannello Arricchimento Video (uno per meta) */}
+                                        {!!onInsertTouchPhases && (
+                                            enrichingPtNum === item.ptNum ? (() => {
+                                                const attackPhases = getAttackPhases(pt, rawEvents, P, opponentName);
+                                                const hasAnySeq = Object.values(phaseSeqs).some(s => s.length > 0);
+                                                return (
+                                                    <View style={{ marginTop: 10, padding: 12, borderRadius: 10, backgroundColor: theme.dark ? '#0F172A' : '#EFF6FF', borderWidth: 1.5, borderColor: '#3B82F6' }}>
+                                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                                                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#3B82F6' }}>
+                                                                📹 Arricchisci Meta #{item.ptNum}
+                                                            </Text>
+                                                            <TouchableOpacity
+                                                                onPress={() => { setEnrichingPtNum(null); setPhaseSeqs({}); setActivePhasePicker(null); }}
+                                                                style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: theme.dark ? '#1E293B' : '#DBEAFE', borderRadius: 8 }}
+                                                            >
+                                                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#3B82F6' }}>✕ Chiudi</Text>
+                                                            </TouchableOpacity>
+                                                        </View>
+
+                                                        {attackPhases.length === 0 ? (
+                                                            <Text style={{ fontSize: 11, color: theme.colors.textSecondary, fontStyle: 'italic' }}>
+                                                                Nessuna fase di attacco trovata per questa meta.
+                                                            </Text>
+                                                        ) : (
+                                                            attackPhases.map(phase => {
+                                                                const seqKey = `${item.ptNum}_${phase.phaseIdx}`;
+                                                                const seq = phaseSeqs[seqKey] || [];
+                                                                const isActive = activePhasePicker === phase.phaseIdx;
+                                                                return (
+                                                                    <View key={`ph-${phase.phaseIdx}`} style={{ marginBottom: 10, padding: 8, borderRadius: 8, backgroundColor: theme.dark ? '#1E293B' : '#F8FAFC', borderWidth: 1, borderColor: theme.dark ? '#334155' : '#CBD5E1' }}>
+                                                                        <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 4 }}>
+                                                                            ⚔️ {phase.label}
+                                                                        </Text>
+                                                                        {phase.existingTouches.length > 0 && (
+                                                                            <Text style={{ fontSize: 10, color: theme.colors.textSecondary, marginBottom: 4 }}>
+                                                                                Già registrati: {phase.existingTouches.map(pid => P(pid).name).join(' → ')}
+                                                                            </Text>
+                                                                        )}
+                                                                        {isActive ? (
+                                                                            <View>
+                                                                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 8, minHeight: 24 }}>
+                                                                                    {seq.length === 0 ? (
+                                                                                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, fontStyle: 'italic' }}>Tocca i giocatori in ordine →</Text>
+                                                                                    ) : (
+                                                                                        seq.map((pid, i) => (
+                                                                                            <React.Fragment key={`ts-${i}`}>
+                                                                                                <Text style={{ fontSize: 12, fontWeight: '700', color: theme.dark ? '#93C5FD' : '#1D4ED8' }}>{P(pid).name}</Text>
+                                                                                                {i < seq.length - 1 && <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>→</Text>}
+                                                                                            </React.Fragment>
+                                                                                        ))
+                                                                                    )}
+                                                                                </View>
+                                                                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                                                                                    {(pt.line || []).map(pid => (
+                                                                                        <TouchableOpacity
+                                                                                            key={pid}
+                                                                                            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.dark ? '#1E3A5F' : '#DBEAFE', borderWidth: 1.5, borderColor: '#3B82F6', flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                                                                                            onPress={() => setPhaseSeqs(prev => ({ ...prev, [seqKey]: [...(prev[seqKey] || []), pid] }))}
+                                                                                            activeOpacity={0.7}
+                                                                                        >
+                                                                                            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: P(pid).g === 'F' ? '#B8338A' : '#1F6FD1' }} />
+                                                                                            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.dark ? '#93C5FD' : '#1D4ED8' }}>{P(pid).name}</Text>
+                                                                                        </TouchableOpacity>
+                                                                                    ))}
+                                                                                </View>
+                                                                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                                                                    <TouchableOpacity
+                                                                                        style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7, backgroundColor: theme.dark ? '#334155' : '#E2E8F0' }}
+                                                                                        onPress={() => setPhaseSeqs(prev => ({ ...prev, [seqKey]: (prev[seqKey] || []).slice(0, -1) }))}
+                                                                                        disabled={seq.length === 0}
+                                                                                    >
+                                                                                        <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.text }}>↩ Annulla</Text>
+                                                                                    </TouchableOpacity>
+                                                                                    <TouchableOpacity
+                                                                                        style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7, backgroundColor: theme.dark ? '#334155' : '#E2E8F0' }}
+                                                                                        onPress={() => setActivePhasePicker(null)}
+                                                                                    >
+                                                                                        <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.text }}>✓ Fatto</Text>
+                                                                                    </TouchableOpacity>
+                                                                                </View>
+                                                                            </View>
+                                                                        ) : (
+                                                                            <TouchableOpacity
+                                                                                style={{ alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: seq.length > 0 ? (theme.dark ? '#1B4332' : '#DCFCE7') : (theme.dark ? '#1E293B' : '#F1F5F9'), borderWidth: 1, borderColor: seq.length > 0 ? '#22C55E' : '#3B82F6', flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                                                                                onPress={() => setActivePhasePicker(phase.phaseIdx)}
+                                                                            >
+                                                                                <Text style={{ fontSize: 11, fontWeight: '700', color: seq.length > 0 ? '#22C55E' : '#3B82F6' }}>
+                                                                                    {seq.length > 0 ? `✓ ${seq.length} tocchi` : '+ Aggiungi tocchi'}
+                                                                                </Text>
+                                                                            </TouchableOpacity>
+                                                                        )}
+                                                                    </View>
+                                                                );
+                                                            })
+                                                        )}
+
+                                                        {attackPhases.length > 0 && (
+                                                            <TouchableOpacity
+                                                                style={{ paddingVertical: 9, borderRadius: 8, backgroundColor: hasAnySeq ? '#003057' : '#94A3B8', alignItems: 'center', marginTop: 4 }}
+                                                                disabled={!hasAnySeq || savingTouches}
+                                                                onPress={async () => {
+                                                                    if (!onInsertTouchPhases) return;
+                                                                    const toSave = attackPhases
+                                                                        .filter(ph => (phaseSeqs[`${item.ptNum}_${ph.phaseIdx}`] || []).length > 0)
+                                                                        .map(ph => ({
+                                                                            beforeRawEventIndex: ph.endRawIdx,
+                                                                            playerIds: phaseSeqs[`${item.ptNum}_${ph.phaseIdx}`] || [],
+                                                                        }));
+                                                                    if (!toSave.length) return;
+                                                                    setSavingTouches(true);
+                                                                    try {
+                                                                        await onInsertTouchPhases(toSave);
+                                                                        setEnrichingPtNum(null);
+                                                                        setPhaseSeqs({});
+                                                                        setActivePhasePicker(null);
+                                                                    } finally {
+                                                                        setSavingTouches(false);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <Text style={{ fontSize: 13, fontWeight: '800', color: '#fff' }}>
+                                                                    {savingTouches ? 'Salvataggio...' : '💾 Salva tocchi'}
+                                                                </Text>
+                                                            </TouchableOpacity>
+                                                        )}
+                                                    </View>
+                                                );
+                                            })() : (
+                                                <TouchableOpacity
+                                                    style={{ alignSelf: 'flex-start', marginTop: 10, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1.5, borderColor: '#3B82F6', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.dark ? '#0F172A' : '#EFF6FF' }}
+                                                    onPress={() => { setEnrichingPtNum(item.ptNum); setPhaseSeqs({}); setActivePhasePicker(null); }}
+                                                    activeOpacity={0.7}
+                                                >
+                                                    <Text style={{ fontSize: 11, color: '#3B82F6' }}>📹</Text>
+                                                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#3B82F6' }}>Arricchisci tocchi</Text>
+                                                </TouchableOpacity>
+                                            )
+                                        )}
                                     </View>
                                 )}
                             </View>
@@ -992,6 +1134,64 @@ export default function MatchTimelineCard({
             )}
         </View>
     );
+}
+
+interface AttackPhase {
+    phaseIdx: number;
+    label: string;
+    endRawIdx: number;
+    existingTouches: string[];
+}
+
+function getAttackPhases(
+    pt: DerivedPoint,
+    rawEvents: MatchEvent[],
+    P: (id: string) => { name: string; g: 'M' | 'F' },
+    opponentName: string
+): AttackPhase[] {
+    const events = pt.ev || [];
+    let poss: 'us' | 'them' = pt.o ? 'us' : 'them';
+    let segStartLabel: string = pt.o ? 'Inizio punto (O)' : '';
+    let segStartEvtIdx = 0;
+    const phases: AttackPhase[] = [];
+    let phaseIdx = 0;
+
+    for (let i = 0; i < events.length; i++) {
+        const e = events[i];
+        if (poss === 'us') {
+            const isTO = e.k === 'tt' || e.k === 'td' || e.k === 'ts' || e.k === 'tx';
+            const isOurGoal = e.k === 'goal';
+            if (isTO || isOurGoal) {
+                const rawIdx = rawEvents.indexOf(e);
+                if (rawIdx !== -1) {
+                    const existing = events.slice(segStartEvtIdx, i).filter(ev => ev.k === 'touch' && ev.p).map(ev => ev.p!);
+                    const endLabel = isOurGoal
+                        ? `Meta! ${e.s ? P(e.s).name : ''}`
+                        : e.k === 'tt' ? `TO Lancio${e.p ? ' ' + P(e.p).name : ''}`
+                        : e.k === 'td' ? `TO Presa${e.p ? ' ' + P(e.p).name : ''}`
+                        : 'Stall Out';
+                    phases.push({ phaseIdx: phaseIdx++, label: `${segStartLabel} → ${endLabel}`, endRawIdx: rawIdx, existingTouches: existing });
+                }
+                if (isTO) {
+                    poss = 'them';
+                    segStartLabel = '';
+                } else {
+                    break;
+                }
+            }
+        } else {
+            if (e.k === 'err') {
+                poss = 'us';
+                segStartLabel = 'Dopo errore loro';
+                segStartEvtIdx = i + 1;
+            } else if (e.k === 'd') {
+                poss = 'us';
+                segStartLabel = `Dopo difesa${e.p ? ' ' + P(e.p).name : ''}`;
+                segStartEvtIdx = i + 1;
+            }
+        }
+    }
+    return phases;
 }
 
 // Funzione di supporto per formattare con icone e colori ogni tipo di evento

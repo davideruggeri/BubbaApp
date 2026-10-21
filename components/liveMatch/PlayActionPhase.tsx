@@ -33,6 +33,7 @@ interface PlayActionPhaseProps {
     P: (id: string) => { name: string; g: 'M' | 'F' };
     pushEvent: (event: any) => void;
     onChangeLine: () => void;
+    onUndo?: () => void;
 }
 
 export default function PlayActionPhase({
@@ -53,6 +54,7 @@ export default function PlayActionPhase({
     P,
     pushEvent,
     onChangeLine,
+    onUndo,
 }: PlayActionPhaseProps) {
     const { theme } = useTheme();
 
@@ -246,8 +248,8 @@ export default function PlayActionPhase({
         <View style={styles.phaseContainer}>
             {/* Banner Possesso Palla */}
             <View style={[styles.statusBanner, { backgroundColor: isOffense ? '#C0D725' : '#003057' }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={[styles.statusTitle, { color: isOffense ? '#131E29' : '#fff' }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                    <Text style={[styles.statusTitle, { color: isOffense ? '#131E29' : '#fff', flex: 1 }]}>
                         {isOffense ? 'DISCO NOSTRO — ATTACCO' : 'DISCO LORO — DIFESA'}
                     </Text>
                     {!isOffense && (
@@ -399,7 +401,7 @@ export default function PlayActionPhase({
                                     <Text style={styles.genderText}>{P(id).g}</Text>
                                 </View>
                                 <Text style={styles.pbtnSub} numberOfLines={1}>
-                                    {isHolder ? 'DISCO · ' : ''}Tch {ps.touches || 0} · M {ps.goals} · A {ps.ast} · D {ps.ds} · TO {ps.toTot}
+                                    {isHolder ? '🥏 ' : ''}T{ps.touches || 0} M{ps.goals} A{ps.ast} D{ps.ds} TO{ps.toTot}
                                 </Text>
                             </TouchableOpacity>
                         );
@@ -453,6 +455,29 @@ export default function PlayActionPhase({
                         })}
                     </View>
                 </View>
+            )}
+
+            {/* Annulla ultima azione */}
+            {canEdit && !pending && onUndo && (
+                <TouchableOpacity
+                    style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        borderRadius: 10,
+                        borderWidth: 1.5,
+                        borderColor: '#94A3B8',
+                        backgroundColor: 'transparent',
+                    }}
+                    onPress={onUndo}
+                    activeOpacity={0.7}
+                >
+                    <Text style={{ fontSize: 18 }}>↩</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#5B6570' }}>Annulla ultima azione</Text>
+                </TouchableOpacity>
             )}
 
             {/* Azioni di Gioco */}

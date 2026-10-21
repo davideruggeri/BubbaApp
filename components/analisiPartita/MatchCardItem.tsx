@@ -112,15 +112,15 @@ export const MatchCardItem: React.FC<MatchCardItemProps> = ({
                         style={styles.actionButton}
                         onPress={() => onExportXLSX(item)}
                     >
-                        <Text style={{ color: '#2E8540', fontWeight: '600' }}>📊 Excel</Text>
+                        <Text style={{ color: '#2E8540', fontWeight: '600', fontSize: 11 }} numberOfLines={1}>📊 Excel</Text>
                     </TouchableOpacity>
                     <View style={[styles.separator, { backgroundColor: theme.colors.border }]} />
                     <TouchableOpacity style={styles.actionButton} onPress={() => onEdit(item)}>
-                        <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>Modifica</Text>
+                        <Text style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 11 }} numberOfLines={1}>✏️ Modifica</Text>
                     </TouchableOpacity>
                     <View style={[styles.separator, { backgroundColor: theme.colors.border }]} />
                     <TouchableOpacity style={styles.actionButton} onPress={() => onDelete(item.id)}>
-                        <Text style={{ color: theme.colors.danger, fontWeight: '600' }}>Elimina</Text>
+                        <Text style={{ color: theme.colors.danger, fontWeight: '600', fontSize: 11 }} numberOfLines={1}>🗑 Elimina</Text>
                     </TouchableOpacity>
                 </View>
             )}

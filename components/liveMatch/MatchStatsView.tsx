@@ -25,6 +25,8 @@ export default function MatchStatsView({
     onUpdateTurnoverEvent,
     onUpdateGoalEvent,
     onUpdatePointLine,
+    onInsertTouches,
+    onInsertTouchPhases,
 }: MatchStatsViewProps) {
     const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
 
@@ -106,6 +108,8 @@ export default function MatchStatsView({
                 match={match}
                 onUpdateGoalEvent={onUpdateGoalEvent}
                 onUpdatePointLine={onUpdatePointLine}
+                onInsertTouches={onInsertTouches}
+                onInsertTouchPhases={onInsertTouchPhases}
             />
         </ScrollView>
     );

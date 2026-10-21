@@ -92,8 +92,8 @@ export const styles = StyleSheet.create({
         color: '#003057',
     },
     phaseContainer: {
-        padding: 14,
-        gap: 12,
+        padding: 10,
+        gap: 10,
     },
     lockedBanner: {
         marginHorizontal: 14,
@@ -146,19 +146,18 @@ export const styles = StyleSheet.create({
         color: '#333',
     },
     statusBanner: {
-        paddingVertical: 12,
-        paddingHorizontal: 16,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
         borderRadius: 12,
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        flexDirection: 'column',
+        gap: 4,
     },
     statusTitle: {
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: 'bold',
     },
     statusSub: {
-        fontSize: 13,
+        fontSize: 11,
         fontWeight: '600',
     },
     promptBanner: {
