@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { styles } from './liveMatchStyles';
 import { useTheme } from '../../context/ThemeContext';
@@ -37,6 +37,8 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
 
     const [toStatsFilter, setToStatsFilter] = useState<'all' | 'toUs' | 'toThem'>('all');
     const [toOriginFilter, setToOriginFilter] = useState<'all' | 'O' | 'D'>('all');
+    const [toPointFilter, setToPointFilter] = useState<number | null>(null);
+    const [pointDropdownOpen, setPointDropdownOpen] = useState(false);
     const [toFieldFlip, setToFieldFlip] = useState<boolean>(false);
     const [selectedAction, setSelectedAction] = useState<ActionDetailModalData | null>(null);
 
@@ -89,6 +91,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
 
     for (let ptIdx = 0; ptIdx < (st.points || []).length; ptIdx++) {
         const pt = st.points[ptIdx];
+        if (toPointFilter !== null && pt.n !== toPointFilter) continue;
         const pScore = pointScores[ptIdx] || { us: 0, them: 0 };
         const isAttackingRight = attRight(match, pt.n, st.halfTimePoint);
         const targetEndzone = isAttackingRight ? 'Destra' : 'Sinistra';
@@ -221,6 +224,22 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
     }
     const totalLocEvents = toUsCount + toThemCount;
 
+    // Elenco mete con punteggio progressivo per il filtro per-punto
+    const pointsForFilter = useMemo(() => {
+        let us = 0;
+        let them = 0;
+        return (st.points || []).map((pt: any) => {
+            const scoreBeforeUs = us;
+            const scoreBeforeThem = them;
+            if (pt.result === 'us') us++;
+            else if (pt.result === 'them') them++;
+            const hasLocEvents = (pt.ev || []).some((e: any) =>
+                e.x != null && (e.k === 'tt' || e.k === 'td' || e.k === 'ts' || e.k === 'tx' || e.k === 'err' || e.k === 'd' || e.k === 'call')
+            );
+            return { n: pt.n, scoreUs: scoreBeforeUs, scoreThem: scoreBeforeThem, o: pt.o, hasLocEvents };
+        });
+    }, [st.points]);
+
     return (
         <View style={[styles.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
             <View>
@@ -228,15 +247,102 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
                     Mappa Turnover & Difese
                 </Text>
                 <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
-                    Totale: {totalLocEvents} ({toUsCount} TO nostri · {toThemCount} TO avversari)
+                    {toPointFilter !== null
+                        ? `Meta #${toPointFilter} · ${toUsCount} TO nostri · ${toThemCount} TO avversari`
+                        : `Totale: ${totalLocEvents} (${toUsCount} TO nostri · ${toThemCount} TO avversari)`}
                 </Text>
             </View>
+
+            {/* Dropdown filtro per singola meta */}
+            {pointsForFilter.length > 0 && (
+                <View style={{ marginTop: 10 }}>
+                    <TouchableOpacity
+                        onPress={() => setPointDropdownOpen(true)}
+                        style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: toPointFilter !== null ? (theme.dark ? '#60A5FA' : '#003057') : (theme.dark ? '#334155' : '#CBD5E1'),
+                            backgroundColor: toPointFilter !== null ? (theme.dark ? '#1E3A5F' : '#EEF4FF') : (theme.dark ? '#1E293B' : '#F8FAFC'),
+                        }}
+                    >
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text }}>
+                            {toPointFilter === null
+                                ? `🔍 Tutte le mete (${pointsForFilter.length})`
+                                : (() => {
+                                    const sel = pointsForFilter.find((p: any) => p.n === toPointFilter);
+                                    return sel ? `🔍 Meta #${sel.n} · ${sel.o ? 'Attacco' : 'Difesa'} · ${sel.scoreUs}-${sel.scoreThem}` : `Meta #${toPointFilter}`;
+                                })()}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>▼</Text>
+                    </TouchableOpacity>
+
+                    <Modal
+                        visible={pointDropdownOpen}
+                        transparent
+                        animationType="fade"
+                        onRequestClose={() => setPointDropdownOpen(false)}
+                    >
+                        <TouchableOpacity
+                            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+                            activeOpacity={1}
+                            onPress={() => setPointDropdownOpen(false)}
+                        >
+                            <TouchableOpacity activeOpacity={1} onPress={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 400, maxHeight: '70%', backgroundColor: theme.colors.card, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, overflow: 'hidden' }}>
+                                <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+                                    <Text style={{ fontSize: 14, fontWeight: 'bold', color: theme.colors.text }}>Seleziona meta</Text>
+                                </View>
+                                <ScrollView>
+                                    {/* Opzione "Tutte" */}
+                                    <TouchableOpacity
+                                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.dark ? '#1E293B' : '#F1F5F9', backgroundColor: toPointFilter === null ? (theme.dark ? '#1E3A5F' : '#EEF4FF') : 'transparent' }}
+                                        onPress={() => { setToPointFilter(null); setPointDropdownOpen(false); }}
+                                    >
+                                        <Text style={{ fontSize: 14, fontWeight: toPointFilter === null ? 'bold' : '500', color: theme.colors.text }}>Tutte le mete</Text>
+                                        {toPointFilter === null && <Text style={{ color: theme.colors.primary }}>✓</Text>}
+                                    </TouchableOpacity>
+                                    {pointsForFilter.map((ptInfo: any) => {
+                                        const isSel = toPointFilter === ptInfo.n;
+                                        const roleColor = ptInfo.o ? '#C8323C' : '#1F6FD1';
+                                        return (
+                                            <TouchableOpacity
+                                                key={ptInfo.n}
+                                                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.dark ? '#1E293B' : '#F1F5F9', backgroundColor: isSel ? (theme.dark ? '#1E3A5F' : '#EEF4FF') : 'transparent', opacity: ptInfo.hasLocEvents ? 1 : 0.5 }}
+                                                onPress={() => { setToPointFilter(isSel ? null : ptInfo.n); setPointDropdownOpen(false); }}
+                                            >
+                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: roleColor + '20', borderWidth: 1, borderColor: roleColor, alignItems: 'center', justifyContent: 'center' }}>
+                                                        <Text style={{ fontSize: 11, fontWeight: 'bold', color: roleColor }}>#{ptInfo.n}</Text>
+                                                    </View>
+                                                    <View>
+                                                        <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text }}>
+                                                            {ptInfo.o ? 'Attacco (O)' : 'Difesa (D)'}
+                                                        </Text>
+                                                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>
+                                                            Score {ptInfo.scoreUs}-{ptInfo.scoreThem}{!ptInfo.hasLocEvents ? ' · Nessun TO registrato' : ''}
+                                                        </Text>
+                                                    </View>
+                                                </View>
+                                                {isSel && <Text style={{ color: theme.colors.primary, fontSize: 16 }}>✓</Text>}
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </ScrollView>
+                            </TouchableOpacity>
+                        </TouchableOpacity>
+                    </Modal>
+                </View>
+            )}
 
             {/* Filtri e Legenda */}
             <View style={{ marginTop: 10, marginBottom: 8, gap: 8 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary }}>
-                        Mete:
+                        Tipo:
                     </Text>
                     {[
                         { key: 'all', label: `Tutte (${totalLocEvents})` },

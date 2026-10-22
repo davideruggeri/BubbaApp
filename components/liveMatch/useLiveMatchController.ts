@@ -166,49 +166,47 @@ export function useLiveMatchController(matchId: string, initialMatch: MatchAnaly
             }));
     }, [curPt, st.points]);
 
-    // Punti e traiettorie grafiche gioco
+    // Punti e traiettorie grafiche gioco — solo punto corrente
     const { playPrevDots, playPrevTrajectories } = useMemo(() => {
         const dots: FieldDot[] = [];
         const trajectories: FieldTrajectory[] = [];
-        for (const p of st.points) {
-            for (const e of p.ev || []) {
-                const isLoc =
-                    e.k === 'tt' ||
-                    e.k === 'td' ||
-                    e.k === 'ts' ||
-                    e.k === 'tx' ||
-                    e.k === 'd' ||
-                    e.k === 'call' ||
-                    e.k === 'err';
-                if (isLoc) {
-                    const isDefense = e.k === 'd';
-                    const isThem = isDefense || e.k === 'call' || e.k === 'err';
-                    const evColor = isDefense ? '#2E8540' : isThem ? '#E07A1F' : p.o ? '#C8323C' : '#1F6FD1';
+        const curO = st.cur?.o ?? false;
+        for (const e of st.cur?.ev || []) {
+            const isLoc =
+                e.k === 'tt' ||
+                e.k === 'td' ||
+                e.k === 'ts' ||
+                e.k === 'tx' ||
+                e.k === 'd' ||
+                e.k === 'call' ||
+                e.k === 'err';
+            if (!isLoc) continue;
+            const isDefense = e.k === 'd';
+            const isThem = isDefense || e.k === 'call' || e.k === 'err';
+            const evColor = isDefense ? '#2E8540' : isThem ? '#E07A1F' : curO ? '#C8323C' : '#1F6FD1';
 
-                    let dotX = e.x;
-                    let dotY = e.y;
-                    if (e.trajectory && e.trajectory.length >= 2) {
-                        if (e.k === 'tt' || e.k === 'err') {
-                            dotX = e.trajectory[0].x;
-                            dotY = e.trajectory[0].y;
-                        } else if (e.k === 'td') {
-                            dotX = e.trajectory[e.trajectory.length - 1].x;
-                            dotY = e.trajectory[e.trajectory.length - 1].y;
-                        }
-                    }
-
-                    if (dotX != null && dotY != null) {
-                        dots.push({ x: dotX, y: dotY, c: evColor, r: 0.8 });
-                    }
-
-                    if (!isDefense && e.trajectory && e.trajectory.length >= 2) {
-                        trajectories.push({ points: e.trajectory, color: evColor });
-                    }
+            let dotX = e.x;
+            let dotY = e.y;
+            if (e.trajectory && e.trajectory.length >= 2) {
+                if (e.k === 'tt' || e.k === 'err') {
+                    dotX = e.trajectory[0].x;
+                    dotY = e.trajectory[0].y;
+                } else if (e.k === 'td') {
+                    dotX = e.trajectory[e.trajectory.length - 1].x;
+                    dotY = e.trajectory[e.trajectory.length - 1].y;
                 }
+            }
+
+            if (dotX != null && dotY != null) {
+                dots.push({ x: dotX, y: dotY, c: evColor, r: 0.8 });
+            }
+
+            if (!isDefense && e.trajectory && e.trajectory.length >= 2) {
+                trajectories.push({ points: e.trajectory, color: evColor });
             }
         }
         return { playPrevDots: dots, playPrevTrajectories: trajectories };
-    }, [st.points]);
+    }, [st.cur?.ev]);
 
     // Push evento
     const pushEvent = async (ev: MatchEvent) => {
