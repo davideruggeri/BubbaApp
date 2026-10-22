@@ -55,11 +55,11 @@ export function useTournamentDetailData(tournamentName: string) {
             m.eventName.trim().toLowerCase() === tournamentName.trim().toLowerCase()
         );
         filtered.sort((a, b) => {
-            const dateCmp = (a.date || '').localeCompare(b.date || '');
-            if (dateCmp !== 0) return dateCmp;
             if (a.orderIndex != null && b.orderIndex != null) return a.orderIndex - b.orderIndex;
             if (a.orderIndex != null) return -1;
             if (b.orderIndex != null) return 1;
+            const dateCmp = (a.date || '').localeCompare(b.date || '');
+            if (dateCmp !== 0) return dateCmp;
             return (a.id || '').localeCompare(b.id || '');
         });
         return filtered;
