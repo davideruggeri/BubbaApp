@@ -89,9 +89,6 @@ export const MatchCardItem: React.FC<MatchCardItemProps> = ({
                             <Text style={[styles.detailBadge, { backgroundColor: item.surface === 'sabbia' ? '#ffe0b2' : '#c8e6c9' }]}>
                                 {item.surface === 'sabbia' ? '🏖️ Sabbia' : '🌱 Erba'}
                             </Text>
-                            <Text style={[styles.detailBadge, { backgroundColor: '#e3f2fd' }]}>
-                                {item.division === 'open' ? '♂ Open' : '⚥ Mixed'}
-                            </Text>
                         </View>
                     </View>
 
