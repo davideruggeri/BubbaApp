@@ -33,6 +33,8 @@ interface LineSelectionPhaseProps {
     lastD: any;
     onStartPoint: (line: string[], startOffense: boolean) => void;
     onOpenRosterModal: () => void;
+    onUndo?: () => void;
+    hasEvents?: boolean;
 }
 
 export default function LineSelectionPhase({
@@ -60,6 +62,8 @@ export default function LineSelectionPhase({
     lastD,
     onStartPoint,
     onOpenRosterModal,
+    onUndo,
+    hasEvents,
 }: LineSelectionPhaseProps) {
     const { theme } = useTheme();
 
@@ -261,6 +265,30 @@ export default function LineSelectionPhase({
                         </TouchableOpacity>
                     )}
                 </View>
+
+                {/* Annulla ultimo punto */}
+                {canEdit && onUndo && hasEvents && (
+                    <TouchableOpacity
+                        style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                            paddingVertical: 10,
+                            paddingHorizontal: 16,
+                            borderRadius: 10,
+                            borderWidth: 1.5,
+                            borderColor: '#94A3B8',
+                            backgroundColor: 'transparent',
+                            marginTop: 10,
+                        }}
+                        onPress={onUndo}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={{ fontSize: 18 }}>↩</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#5B6570' }}>Annulla ultima azione</Text>
+                    </TouchableOpacity>
+                )}
             </View>
         </View>
     );

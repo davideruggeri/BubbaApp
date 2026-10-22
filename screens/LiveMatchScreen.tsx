@@ -207,6 +207,8 @@ export default function LiveMatchScreen() {
                                         setPullPuller(null);
                                     }}
                                     onOpenRosterModal={() => setModalRosterVisible(true)}
+                                    onUndo={handleUndo}
+                                    hasEvents={!!(match.events && match.events.length > 0)}
                                 />
                             )}
                             {st.phase === 'pull' && curPt && (
