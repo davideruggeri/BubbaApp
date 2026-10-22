@@ -1,5 +1,4 @@
 import { Text, StyleSheet, StyleProp, TextStyle, View, TouchableOpacity, Image, ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { isChristmasPeriod } from '../utils/date';
 
@@ -23,7 +22,7 @@ export default function ScreenTitle({ title, style, containerStyle, onBack, righ
         <View style={[styles.container, containerStyle]}>
             {onBack && (
                 <TouchableOpacity onPress={onBack} style={styles.backButton}>
-                    <Ionicons name="chevron-back" size={28} color={theme.colors.primary} />
+                    <Text style={{ fontSize: 30, color: theme.colors.primary, lineHeight: 32, fontWeight: '300' }}>‹</Text>
                 </TouchableOpacity>
             )}
             <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
