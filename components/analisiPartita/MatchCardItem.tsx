@@ -90,7 +90,7 @@ export const MatchCardItem: React.FC<MatchCardItemProps> = ({
                                 {item.surface === 'sabbia' ? '🏖️ Sabbia' : '🌱 Erba'}
                             </Text>
                             <Text style={[styles.detailBadge, { backgroundColor: '#e3f2fd' }]}>
-                                {item.firstRatio === 'F' ? '3F / 2M' : '3M / 2F'}
+                                {item.division === 'open' ? '♂ Open' : '⚥ Mixed'}
                             </Text>
                         </View>
                     </View>
