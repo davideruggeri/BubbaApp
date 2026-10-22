@@ -6,6 +6,13 @@ import {
     ScrollView,
     ActivityIndicator,
     useWindowDimensions,
+    Modal,
+    View,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    KeyboardAvoidingView,
+    Platform,
 } from 'react-native';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -38,6 +45,8 @@ export default function LiveMatchScreen() {
     const { width: windowWidth } = useWindowDimensions();
     const isMobile = windowWidth < 600;
     const [isLiveMode, setIsLiveMode] = React.useState(false);
+    const [editOpponentVisible, setEditOpponentVisible] = React.useState(false);
+    const [editOpponentText, setEditOpponentText] = React.useState('');
 
     const {
         match,
@@ -132,6 +141,10 @@ export default function LiveMatchScreen() {
                 isMobile={isMobile}
                 isLiveMode={isLiveMode}
                 onToggleLiveMode={() => setIsLiveMode(v => !v)}
+                onEditOpponent={() => {
+                    setEditOpponentText(match.opponent);
+                    setEditOpponentVisible(true);
+                }}
             />
 
             {/* Contenuto Schermata */}
@@ -328,6 +341,66 @@ export default function LiveMatchScreen() {
                 onRemovePlayerFromRoster={handleRemovePlayerFromRoster}
                 onRemapPlayer={handleRemapPlayer}
             />
+
+            {/* Modale Modifica Nome Avversario */}
+            <Modal
+                visible={editOpponentVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setEditOpponentVisible(false)}
+            >
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)', padding: 24 }}
+                >
+                    <View style={{ width: '100%', maxWidth: 380, backgroundColor: theme.colors.card, borderRadius: 14, padding: 20, borderWidth: 1, borderColor: theme.colors.border }}>
+                        <Text style={{ fontSize: 15, fontWeight: 'bold', color: theme.colors.text, marginBottom: 14 }}>
+                            ✏️ Modifica nome avversario
+                        </Text>
+                        <TextInput
+                            value={editOpponentText}
+                            onChangeText={setEditOpponentText}
+                            placeholder="Nome squadra avversaria"
+                            placeholderTextColor={theme.colors.textSecondary}
+                            autoFocus
+                            style={{
+                                borderWidth: 1,
+                                borderColor: theme.colors.border,
+                                borderRadius: 8,
+                                paddingHorizontal: 12,
+                                paddingVertical: 10,
+                                fontSize: 15,
+                                color: theme.colors.text,
+                                backgroundColor: theme.dark ? '#1E293B' : '#F8FAFC',
+                                marginBottom: 16,
+                            }}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity
+                                onPress={() => setEditOpponentVisible(false)}
+                                style={{ flex: 1, paddingVertical: 11, borderRadius: 8, backgroundColor: theme.dark ? '#334155' : '#E2E8F0', alignItems: 'center' }}
+                            >
+                                <Text style={{ fontWeight: '700', color: theme.colors.text }}>Annulla</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={async () => {
+                                    const name = editOpponentText.trim();
+                                    if (!name) return;
+                                    try {
+                                        await updateMatchAnalysis({ id: match.id, opponent: name });
+                                        setEditOpponentVisible(false);
+                                    } catch (err: any) {
+                                        showAlert('Errore', err?.message || 'Impossibile aggiornare il nome.');
+                                    }
+                                }}
+                                style={{ flex: 2, paddingVertical: 11, borderRadius: 8, backgroundColor: '#003057', alignItems: 'center' }}
+                            >
+                                <Text style={{ fontWeight: '800', color: '#fff' }}>Salva</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
 
             {/* Modale Modifica Manuale Tocchi */}
             <EditTouchesModal

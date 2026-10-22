@@ -2,7 +2,7 @@
 // Componente Header e Tabellone Punteggio Gigante per LiveMatch
 
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Pressable } from 'react-native';
 import ScreenTitle from '../ScreenTitle';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -23,6 +23,7 @@ interface ScoreboardHeaderProps {
     isMobile: boolean;
     isLiveMode?: boolean;
     onToggleLiveMode?: () => void;
+    onEditOpponent?: () => void;
 }
 
 export const ScoreboardHeader: React.FC<ScoreboardHeaderProps> = React.memo(({
@@ -42,6 +43,7 @@ export const ScoreboardHeader: React.FC<ScoreboardHeaderProps> = React.memo(({
     isMobile,
     isLiveMode,
     onToggleLiveMode,
+    onEditOpponent,
 }) => {
     const { theme } = useTheme();
 
@@ -62,7 +64,7 @@ export const ScoreboardHeader: React.FC<ScoreboardHeaderProps> = React.memo(({
             {isStaff && (
                 <View style={styles.headerActionsRow}>
                     <TouchableOpacity
-                        style={[styles.headerBtn, { backgroundColor: '#003057' }]}
+                        style={[styles.headerBtn, { backgroundColor: theme.dark ? '#1D4ED8' : '#003057' }]}
                         onPress={onOpenRoster}
                         activeOpacity={0.8}
                     >
@@ -109,13 +111,20 @@ export const ScoreboardHeader: React.FC<ScoreboardHeaderProps> = React.memo(({
             <View style={styles.scoreRow}>
                 <View style={styles.teamScore}>
                     <Text style={[styles.teamName, { color: theme.colors.text }]} numberOfLines={1}>BUBBA</Text>
-                    <Text style={[styles.scoreValue, { color: '#003057' }]}>{scoreUs}</Text>
+                    <Text style={[styles.scoreValue, { color: theme.colors.primary }]}>{scoreUs}</Text>
                 </View>
                 <Text style={[styles.scoreDivider, { color: theme.colors.textSecondary }]}>–</Text>
                 <View style={styles.teamScore}>
-                    <Text style={[styles.teamName, { color: theme.colors.text }]} numberOfLines={1} ellipsizeMode="tail">
-                        {opponent.toUpperCase()}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Text style={[styles.teamName, { color: theme.colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+                            {opponent.toUpperCase()}
+                        </Text>
+                        {isStaff && canEdit && onEditOpponent && (
+                            <Pressable onPress={onEditOpponent} hitSlop={8}>
+                                <Text style={{ fontSize: 11 }}>✏️</Text>
+                            </Pressable>
+                        )}
+                    </View>
                     <Text style={[styles.scoreValue, { color: '#E07A1F' }]}>{scoreThem}</Text>
                 </View>
             </View>
@@ -123,18 +132,18 @@ export const ScoreboardHeader: React.FC<ScoreboardHeaderProps> = React.memo(({
             {/* Tab Navigator */}
             <View style={styles.tabBar}>
                 <TouchableOpacity
-                    style={[styles.tabItem, activeTab === 'play' && styles.tabItemOn]}
+                    style={[styles.tabItem, activeTab === 'play' && [styles.tabItemOn, { borderBottomColor: theme.colors.primary }]]}
                     onPress={() => onTabChange('play')}
                 >
-                    <Text style={[styles.tabText, activeTab === 'play' && styles.tabTextOn]}>
+                    <Text style={[styles.tabText, activeTab === 'play' && [styles.tabTextOn, { color: theme.colors.primary }]]}>
                         {isCompleted ? 'PARTITA (CONCLUSA)' : 'PARTITA (LIVE)'}
                     </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={[styles.tabItem, activeTab === 'stats' && styles.tabItemOn]}
+                    style={[styles.tabItem, activeTab === 'stats' && [styles.tabItemOn, { borderBottomColor: theme.colors.primary }]]}
                     onPress={() => onTabChange('stats')}
                 >
-                    <Text style={[styles.tabText, activeTab === 'stats' && styles.tabTextOn]}>STATISTICHE</Text>
+                    <Text style={[styles.tabText, activeTab === 'stats' && [styles.tabTextOn, { color: theme.colors.primary }]]}>STATISTICHE</Text>
                 </TouchableOpacity>
             </View>
         </View>

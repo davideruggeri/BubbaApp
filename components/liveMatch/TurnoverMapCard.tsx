@@ -731,7 +731,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
                                             alignItems: 'center',
                                         }}
                                     >
-                                        <View>
+                                        <View style={{ flex: 1, marginRight: 8 }}>
                                             <Text
                                                 style={{
                                                     fontSize: 11,
@@ -742,7 +742,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
                                             >
                                                 Punto #{selectedAction.pointIndex}
                                             </Text>
-                                            <Text style={{ fontSize: 16, fontWeight: 'bold', color: theme.colors.text, marginTop: 2 }}>
+                                            <Text style={{ fontSize: 16, fontWeight: 'bold', color: theme.colors.text, marginTop: 2 }} numberOfLines={1}>
                                                 Bubba {selectedAction.scoreUs} - {selectedAction.scoreThem} {match.opponent}
                                             </Text>
                                         </View>
@@ -754,6 +754,7 @@ export const TurnoverMapCard: React.FC<TurnoverMapCardProps> = ({
                                                 backgroundColor: selectedAction.startType === 'O' ? '#C8323C22' : '#1F6FD122',
                                                 borderWidth: 1,
                                                 borderColor: selectedAction.startType === 'O' ? '#C8323C' : '#1F6FD1',
+                                                flexShrink: 0,
                                             }}
                                         >
                                             <Text

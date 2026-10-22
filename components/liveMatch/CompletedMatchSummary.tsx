@@ -79,7 +79,7 @@ export const CompletedMatchSummary: React.FC<CompletedMatchSummaryProps> = React
                         <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Hold</Text>
                     </View>
                     <View style={{ alignItems: 'center' }}>
-                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#003057' }}>{breaks}</Text>
+                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.colors.primary }}>{breaks}</Text>
                         <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Break</Text>
                     </View>
                     <View style={{ alignItems: 'center' }}>
@@ -116,7 +116,7 @@ export const CompletedMatchSummary: React.FC<CompletedMatchSummaryProps> = React
                     </View>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                         <TouchableOpacity
-                            style={{ flex: 1, backgroundColor: '#003057', paddingVertical: 11, borderRadius: 8, alignItems: 'center' }}
+                            style={{ flex: 1, backgroundColor: theme.dark ? '#1D4ED8' : '#003057', paddingVertical: 11, borderRadius: 8, alignItems: 'center' }}
                             onPress={onOpenRoster}
                         >
                             <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>👥 Convocati & Roster</Text>

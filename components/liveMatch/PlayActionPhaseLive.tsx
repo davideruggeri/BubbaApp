@@ -41,7 +41,7 @@ export default function PlayActionPhaseLive({
     const toUs = st?.toUs ?? 0;
     const toThem = st?.toThem ?? 0;
 
-    const bannerBg = isOffense ? '#C0D725' : '#003057';
+    const bannerBg = isOffense ? '#C0D725' : (theme.dark ? '#1D4ED8' : '#003057');
     const bannerText = isOffense ? '#1A2600' : '#FFFFFF';
     const phaseLabel = isOffense ? 'DISCO NOSTRO — ATTACCO' : 'DISCO LORO — DIFESA';
 
@@ -256,7 +256,7 @@ export default function PlayActionPhaseLive({
                     ) : (
                         <>
                             <TouchableOpacity
-                                style={[actionBtn, { backgroundColor: '#003057' }]}
+                                style={[actionBtn, { backgroundColor: theme.dark ? '#1D4ED8' : '#003057' }]}
                                 onPress={() => setPendingAction('d')}
                                 activeOpacity={0.8}
                                 disabled={pending}

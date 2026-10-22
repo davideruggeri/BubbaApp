@@ -247,7 +247,7 @@ export default function PlayActionPhase({
     return (
         <View style={styles.phaseContainer}>
             {/* Banner Possesso Palla */}
-            <View style={[styles.statusBanner, { backgroundColor: isOffense ? '#C0D725' : '#003057' }]}>
+            <View style={[styles.statusBanner, { backgroundColor: isOffense ? '#C0D725' : (theme.dark ? '#1D4ED8' : '#003057') }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                     <Text style={[styles.statusTitle, { color: isOffense ? '#131E29' : '#fff', flex: 1 }]}>
                         {isOffense ? 'DISCO NOSTRO — ATTACCO' : 'DISCO LORO — DIFESA'}
@@ -540,7 +540,7 @@ export default function PlayActionPhase({
                     ) : (
                         <>
                             <TouchableOpacity
-                                style={[styles.actBtn, { backgroundColor: '#003057' }]}
+                                style={[styles.actBtn, { backgroundColor: theme.dark ? '#1D4ED8' : '#003057' }]}
                                 onPress={() => setPending({ step: 'd' })}
                             >
                                 <Text style={styles.actTitle}>DIFESA (D)</Text>

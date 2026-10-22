@@ -203,7 +203,7 @@ export default function LineSelectionPhase({
 
                 {/* Badge di conteggio e validazione */}
                 <View style={styles.lineBar}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: isMobile ? undefined : 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
                         <View
                             style={[
                                 styles.chip,
