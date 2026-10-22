@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, Modal, FlatList, TextInput, ScrollView, ActivityIndicator, Platform, useWindowDimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { subscribeToWorldLocations, WorldLocation, addWorldLocation, updateWorldLocation, deleteWorldLocation, subscribeToEvents, subscribeToHallOfFame, Event, HallOfFameEntry, deleteEvent, deleteHallOfFameEntry, getEventRoster, RosterMember, checkAndAutoArchivePastTournaments, updateEvent, updateHallOfFameEntry } from '../services/firestore';
@@ -1192,7 +1193,7 @@ const LocationDetails = ({
     const placement = item.placement || (item.originalItem as HallOfFameEntry)?.placement;
     const awards = item.awards || (item.originalItem as HallOfFameEntry)?.awards;
 
-    const { width: detailWidth } = useWindowDimensions();
+    const { width: detailWidth, height: detailHeight } = useWindowDimensions();
     const isMobileDetail = detailWidth < 768;
 
     return (
@@ -1312,13 +1313,13 @@ const LocationDetails = ({
 
             {selectedImage && (
                 <Modal visible={true} transparent={true} onRequestClose={() => setSelectedImage(null)}>
-                    <View style={styles.fullscreenImageContainer}>
+                    <View style={[styles.fullscreenImageContainer, { width: detailWidth, height: detailHeight }]}>
                         <TouchableOpacity style={styles.fullscreenClose} onPress={() => setSelectedImage(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                            <View style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 6 }}>
-                                <Image source={require('../assets/x.png')} style={{ width: 24, height: 24, tintColor: 'red' }} resizeMode="contain" />
+                            <View style={{ backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 20, padding: 8 }}>
+                                <Ionicons name="close" size={22} color="#fff" />
                             </View>
                         </TouchableOpacity>
-                        <Image source={{ uri: selectedImage }} style={{ flex: 1, width: '100%' }} resizeMode="contain" />
+                        <Image source={{ uri: selectedImage }} style={{ width: detailWidth, height: detailHeight }} resizeMode="contain" />
                     </View>
                 </Modal>
             )}
