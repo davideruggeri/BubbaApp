@@ -1293,18 +1293,19 @@ const LocationDetails = ({
                 {item.images && item.images.length > 0 ? (
                     <View style={{ marginBottom: 20 }}>
                         <Text style={[styles.sectionTitle, { color: theme.colors.text, marginBottom: 8 }]}>Foto:</Text>
-                        <FlatList
-                            data={item.images}
-                            keyExtractor={(_, index) => index.toString()}
-                            numColumns={3}
-                            scrollEnabled={false}
-                            renderItem={({ item: uri }) => (
-                                <TouchableOpacity onPress={() => setSelectedImage(uri)}>
-                                    <Image source={{ uri }} style={styles.gridImage} />
-                                </TouchableOpacity>
-                            )}
-                            contentContainerStyle={styles.gallery}
-                        />
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+                            {item.images.map((uri, index) => {
+                                const imgSize = Math.floor((detailWidth - (isMobileDetail ? 28 : 40) - 8) / 3);
+                                return (
+                                    <TouchableOpacity key={index} onPress={() => setSelectedImage(uri)}>
+                                        <Image
+                                            source={{ uri }}
+                                            style={{ width: imgSize, height: imgSize, borderRadius: 8, backgroundColor: '#eee' }}
+                                        />
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
                     </View>
                 ) : null}
             </ScrollView>
