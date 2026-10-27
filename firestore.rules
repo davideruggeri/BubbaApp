@@ -38,11 +38,32 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Profili utente: ognuno legge/scrive il proprio; admin può leggere tutti e scrivere tutti
+    // Campi del profilo che solo un amministratore può impostare o modificare
+    function protectedUserFields() {
+      return ['role', 'ruolo_globale', 'isDisabled', 'memberId'];
+    }
+
+    // Alla registrazione l'utente può creare solo un profilo base (ruolo "Bubba" o nessun ruolo)
+    function isValidNewProfile() {
+      let data = request.resource.data;
+      return data.get('role', null) in ['Bubba', null]
+        && !data.keys().hasAny(['ruolo_globale'])
+        && data.get('memberId', null) == null
+        && data.get('isDisabled', false) == false;
+    }
+
+    // L'utente può modificare il proprio profilo, ma non ruolo, stato o collegamento al membro
+    function changesOnlyOwnFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(protectedUserFields());
+    }
+
+    // Profili utente: tutti gli autenticati leggono; ognuno modifica i propri dati base;
+    // ruoli, disattivazione e collegamento al membro solo da admin
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidNewProfile();
+      allow update: if isAdmin() || (isOwner(userId) && changesOnlyOwnFields());
       allow delete: if isAdmin();
     }
 

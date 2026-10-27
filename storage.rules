@@ -1,8 +1,45 @@
 rules_version = '2';
+
+// Le immagini vengono mostrate tramite gli URL di download (getDownloadURL),
+// che funzionano anche senza login: queste regole valgono per l'accesso diretto.
 service firebase.storage {
   match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Legge il ruolo dal profilo Firestore (stessa logica di firestore.rules)
+    function isStaff() {
+      let user = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+      return isAuthenticated() && (
+        user.get('role', '') in ['amministratore', 'staff'] ||
+        user.get('ruolo_globale', '') in ['amministratore', 'staff']
+      );
+    }
+
+    // Solo immagini, massimo 10 MB
+    function isValidImage() {
+      return request.resource.contentType.matches('image/.*')
+        && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // Foto di eventi, Hall of Fame e BubbaWorld: caricate dallo staff
+    match /images/{fileName} {
+      allow read: if isAuthenticated();
+      allow create, update: if isStaff() && isValidImage();
+      allow delete: if isStaff();
+    }
+
+    match /world_photos/{fileName} {
+      allow read: if isAuthenticated();
+      allow create, update: if isStaff() && isValidImage();
+      allow delete: if isStaff();
+    }
+
+    // Tutto il resto è bloccato
     match /{allPaths=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }
