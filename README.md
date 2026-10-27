@@ -9,8 +9,8 @@ Sviluppata con **React Native + Expo** e **Firebase**. È pubblicata come **PWA*
   <img width="160" alt="Home" src="https://github.com/user-attachments/assets/c100521f-bfec-4405-8703-a2033a083e0b" />
   <img width="160" alt="Calendario" src="https://github.com/user-attachments/assets/b342e9ef-e93e-4f54-a07d-6a776bceae9d" />
   <img width="160" alt="Presenze" src="https://github.com/user-attachments/assets/ba07d321-b883-4106-b274-5a164944e4bb" />
-  <img width="160" alt="Analisi partita" src="https://github.com/user-attachments/assets/ec1bce2f-fbb5-4960-ae5c-4f5d4938fece" />
-  <img width="160" alt="Statistiche partita" src="https://github.com/user-attachments/assets/438369ee-2dcd-453e-a353-70667a39f1b4" />
+  <img width="160" alt="AnalisiParita2" src="https://github.com/user-attachments/assets/639bd19d-005e-480f-8e34-5d74d0dcf52f" />
+  <img width="160" alt="AnalisiParita1" src="https://github.com/user-attachments/assets/03858a08-67b7-4077-9d27-6e3c6d9d61dc" />
 </p>
 
 
