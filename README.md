@@ -5,11 +5,13 @@ La squadra la usa per organizzare allenamenti, tornei e presenze e per raccoglie
 
 Sviluppata con **React Native + Expo** e **Firebase**. È pubblicata come **PWA** su Firebase Hosting, quindi i compagni la usano dal browser del telefono senza installare nulla.
 
-<img width="1080" height="2307" alt="Home" src="https://github.com/user-attachments/assets/c100521f-bfec-4405-8703-a2033a083e0b" />
-<img width="1080" height="2306" alt="Calendario" src="https://github.com/user-attachments/assets/b342e9ef-e93e-4f54-a07d-6a776bceae9d" />
-<img width="1080" height="2304" alt="Presenze" src="https://github.com/user-attachments/assets/ba07d321-b883-4106-b274-5a164944e4bb" />
-<img width="1080" height="2400" alt="AnalisiParita1" src="https://github.com/user-attachments/assets/ec1bce2f-fbb5-4960-ae5c-4f5d4938fece" />
-<img width="1080" height="2400" alt="AnalisiParita2" src="https://github.com/user-attachments/assets/438369ee-2dcd-453e-a353-70667a39f1b4" />
+<p align="center">
+  <img width="160" alt="Home" src="https://github.com/user-attachments/assets/c100521f-bfec-4405-8703-a2033a083e0b" />
+  <img width="160" alt="Calendario" src="https://github.com/user-attachments/assets/b342e9ef-e93e-4f54-a07d-6a776bceae9d" />
+  <img width="160" alt="Presenze" src="https://github.com/user-attachments/assets/ba07d321-b883-4106-b274-5a164944e4bb" />
+  <img width="160" alt="Analisi partita" src="https://github.com/user-attachments/assets/ec1bce2f-fbb5-4960-ae5c-4f5d4938fece" />
+  <img width="160" alt="Statistiche partita" src="https://github.com/user-attachments/assets/438369ee-2dcd-453e-a353-70667a39f1b4" />
+</p>
 
 
 
