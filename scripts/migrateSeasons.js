@@ -1,5 +1,5 @@
 // One-time migration script to backfill 'stagione' field in presenze, calendario, and match_analysis
-// Run with: node migrateSeasons.js [admin_email] [admin_password]
+// Run with: node scripts/migrateSeasons.js [admin_email] [admin_password]
 
 const { initializeApp } = require('firebase/app');
 const { getFirestore, collection, getDocs, doc, setDoc, getDoc, writeBatch } = require('firebase/firestore');
@@ -122,7 +122,7 @@ async function run() {
             process.exit(1);
         }
     } else {
-        console.log("ℹ️ Nessuna credenziale passata. Se ricevi PERMISSION_DENIED esegui:\n   node migrateSeasons.js <email_admin> <password_admin>\noppure usa il pulsante 'Migra Dati Storici' in Impostazioni nell'app.");
+        console.log("ℹ️ Nessuna credenziale passata. Se ricevi PERMISSION_DENIED esegui:\n   node scripts/migrateSeasons.js <email_admin> <password_admin>\noppure usa il pulsante 'Migra Dati Storici' in Impostazioni nell'app.");
     }
 
     try {
