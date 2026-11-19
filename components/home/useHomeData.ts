@@ -20,7 +20,6 @@ import {
     UserWrappedData,
     TeamWrappedData,
     isWrappedWithinActivePeriod,
-    isWrappedViewed,
     subscribeToSeasonPresenzeCounts,
     checkAndAutoArchivePastTournaments,
 } from '../../services/firestore';
@@ -81,23 +80,13 @@ export function useHomeData(stagioneCorrente: string, userProfile: any) {
 
     // Check Wrapped Banner Visibility
     useEffect(() => {
-        if (!latestWrappedSeason) {
+        if (!latestWrappedSeason || !teamWrapped?.activatedAt) {
             setShowWrappedBanner(false);
             return;
         }
 
-        const checkVisibility = async () => {
-            const withinActivePeriod = isWrappedWithinActivePeriod(teamWrapped?.activatedAt, 30);
-            if (withinActivePeriod) {
-                setShowWrappedBanner(true);
-            } else {
-                const viewed = await isWrappedViewed(latestWrappedSeason, userProfile?.uid);
-                setShowWrappedBanner(!viewed);
-            }
-        };
-
-        checkVisibility();
-    }, [latestWrappedSeason, teamWrapped?.activatedAt, userProfile?.uid]);
+        setShowWrappedBanner(isWrappedWithinActivePeriod(teamWrapped.activatedAt, 30));
+    }, [latestWrappedSeason, teamWrapped?.activatedAt]);
 
     // 2. Real attendance counts for CAMPO only
     useEffect(() => {

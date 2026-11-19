@@ -22,17 +22,19 @@ export const CalendarEventCard: React.FC<CalendarEventCardProps> = ({
     onPressEdit,
 }) => {
     const isTournamentOrOther = item.type === 'tournament' || item.type === 'other';
+    const isBirthday = item.type === 'birthday';
 
     return (
         <TouchableOpacity
             onPress={() => {
+                if (isBirthday) return;
                 if (isTournamentOrOther) {
                     onPressTournament(item);
                 } else if (!isBubbaOnly) {
                     onPressEdit(item);
                 }
             }}
-            activeOpacity={isBubbaOnly && !isTournamentOrOther ? 1 : 0.7}
+            activeOpacity={isBirthday || (isBubbaOnly && !isTournamentOrOther) ? 1 : 0.7}
         >
             <View style={[styles.eventCard, style, { backgroundColor: theme.colors.card }]}>
                 <View style={[styles.dateBox, { backgroundColor: getTypeColor(item.type, theme) }]}>

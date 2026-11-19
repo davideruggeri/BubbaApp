@@ -44,6 +44,29 @@ export const LeagueBonusTab: React.FC<LeagueBonusTabProps> = ({
     const eventLabel = currentEvent ? currentEvent.title : 'Allenamento';
     const hasDates = !!(leagueDates && leagueDates.startDate);
 
+    const renderBonusTags = (memberBonuses: LeagueBonus[]) => {
+        if (memberBonuses.length === 0) return null;
+
+        return (
+            <View style={styles.bonusTags}>
+                {memberBonuses.map(bonus => (
+                    <TouchableOpacity
+                        key={bonus.id}
+                        style={[
+                            styles.bonusTag,
+                            bonus.points >= 0 ? styles.bonusTagPositive : styles.malusTag,
+                        ]}
+                        onPress={() => !isBubbaOnly && onDeleteBonus(bonus.id)}
+                    >
+                        <Text style={styles.bonusTagText}>
+                            {bonus.points > 0 ? '+' : ''}{bonus.points} {bonus.reason}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+            </View>
+        );
+    };
+
     const renderTournamentMemberRow = ({ item }: { item: Member }) => {
         const memberBonuses = bonuses.filter(b => b.memberId === item.id && b.date === bonusDate);
         const hasPresence = memberBonuses.some(b => b.reason === 'Presenza');
@@ -54,22 +77,7 @@ export const LeagueBonusTab: React.FC<LeagueBonusTabProps> = ({
                     <Text style={[styles.attendeeName, { color: theme.colors.text }]}>
                         {item.nickname || item.firstName}
                     </Text>
-                    <View style={styles.bonusTags}>
-                        {memberBonuses.map((bonus, index) => (
-                            <TouchableOpacity
-                                key={index}
-                                style={[
-                                    styles.bonusTag,
-                                    bonus.points >= 0 ? styles.bonusTagPositive : styles.malusTag,
-                                ]}
-                                onPress={() => !isBubbaOnly && onDeleteBonus(bonus.id)}
-                            >
-                                <Text style={styles.bonusTagText}>
-                                    {bonus.points > 0 ? '+' : ''}{bonus.points} {bonus.reason}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
+                    {renderBonusTags(memberBonuses)}
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <TouchableOpacity
@@ -113,24 +121,7 @@ export const LeagueBonusTab: React.FC<LeagueBonusTabProps> = ({
                     <Text style={[styles.attendeeName, { color: theme.colors.text }]}>
                         {member.nickname || member.firstName}
                     </Text>
-                    {memberBonuses.length > 0 && (
-                        <View style={styles.bonusTags}>
-                            {memberBonuses.map((bonus, index) => (
-                                <TouchableOpacity
-                                    key={index}
-                                    style={[
-                                        styles.bonusTag,
-                                        bonus.points >= 0 ? styles.bonusTagPositive : styles.malusTag,
-                                    ]}
-                                    onPress={() => !isBubbaOnly && onDeleteBonus(bonus.id)}
-                                >
-                                    <Text style={styles.bonusTagText}>
-                                        {bonus.points > 0 ? '+' : ''}{bonus.points} {bonus.reason}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    )}
+                    {renderBonusTags(memberBonuses)}
                 </View>
                 {!isBubbaOnly && !isRestrictedEvent && (
                     <View style={[styles.actionButton, { backgroundColor: theme.colors.primary, width: 32, height: 32, borderRadius: 16 }]}>

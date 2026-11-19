@@ -6,6 +6,7 @@ import {
     deleteEvent,
     Event,
     subscribeToMembers,
+    isMemberCurrentlyActive,
     Member,
     deleteField,
     subscribeToWorldLocations,
@@ -22,7 +23,7 @@ import { resolveLocationCoordinates } from '../../utils/geocoding';
 export function useCalendarData(initialEditEventId?: string, onEditFound?: (event: Event) => void) {
     const [events, setEvents] = useState<Event[]>([]);
     const [worldLocations, setWorldLocations] = useState<WorldLocation[]>([]);
-    const [members, setMembers] = useState<Member[]>([]);
+    const [allMembers, setAllMembers] = useState<Member[]>([]);
 
     const [modalVisible, setModalVisible] = useState(false);
     const [participantsModalVisible, setParticipantsModalVisible] = useState(false);
@@ -62,8 +63,8 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
             setEvents(updatedEvents);
         });
         const unsubscribeMembers = subscribeToMembers((updatedMembers) => {
-            setMembers(updatedMembers);
-        });
+            setAllMembers(updatedMembers);
+        }, true);
         const unsubscribeLocations = subscribeToWorldLocations((locations) => {
             setWorldLocations(locations);
         });
@@ -75,13 +76,19 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
         };
     }, []);
 
+    // Solo membri attivi (selettore partecipanti); i compleanni usano tutti i membri, inattivi inclusi
+    const members = useMemo(
+        () => allMembers.filter(m => isMemberCurrentlyActive(m)),
+        [allMembers]
+    );
+
     // Birthdays
     const birthdayEvents = useMemo(() => {
         const bEvents: Event[] = [];
         const currentYear = new Date().getFullYear();
         const years = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2];
 
-        members.forEach(member => {
+        allMembers.forEach(member => {
             if (member.birthDate) {
                 try {
                     const parts = member.birthDate.split('-');
@@ -103,7 +110,7 @@ export function useCalendarData(initialEditEventId?: string, onEditFound?: (even
             }
         });
         return bEvents;
-    }, [members]);
+    }, [allMembers]);
 
     const allEvents = useMemo(() => {
         return [...events, ...birthdayEvents].filter(e => e.type !== 'championship_season');
